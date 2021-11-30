@@ -1,0 +1,48 @@
+# application will loop until this file is found
+stopfile stop
+#hostname localhost
+#hostaddr 127.0.0.1
+port 5432
+user tooldaq
+passwd tooldaq19
+#context_io_threads 1
+clt_sub_port 77778
+clt_dlr_port 77777
+clt_rtr_port 77779
+mm_rcv_port 777798
+mm_snd_port 777797
+log_pub_port 77776
+log_sub_port 77775
+
+# all timeouts in ms
+clt_sub_socket_timeout 500
+clt_rtr_socket_timeout 500
+clr_dlr_socket_timeout 500
+mm_rcv_socket_timeout 500
+mm_snd_socket_timeout 500
+log_pub_socket_timeout 500
+log_sub_socket_timeout 500
+inpoll_timeout 50
+outpoll_timeout 50
+
+broadcast_period_ms 1000
+promote_timeout_ms 10000
+mm_warn_timeout -1 #7000
+# startup setting only, will be promoted if it can't find the master
+am_master 1
+# unless this is set
+dont_promote 0
+# how many times to try to send a response to clients
+max_send_attempts 3
+# how many postgres queries in the queue before we warn about being full
+warn_limit 700
+# how many postgres queries before we start dropping them 
+drop_limit 1000
+# how long to cache received messages so we don't get duplicates
+cache_period_ms 10000
+# if writes are sent to the read-only port, but we're master, should we accept them?
+handle_unexpected_writes 0
+stats_period_ms 60000
+stdio_verbosity 4
+db_verbosity 1
+service_discovery_config ServiceDiscoveryConfig
