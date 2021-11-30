@@ -1,0 +1,18 @@
+# the main executable
+main
+# client stats temp file
+compstats
+
+# backups
+*~
+# objects
+*.o
+# libraries
+*.so
+*.a
+# dependency files
+*.d
+# root dictionary pcm files
+*.pcm
+# python pre-compiled modules
+*.pyc

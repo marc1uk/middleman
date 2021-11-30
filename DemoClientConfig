@@ -1,0 +1,21 @@
+stopfile stop
+
+verbosity 3   # currently unused
+max_retries 3
+
+clt_dlr_port 77777
+clt_pub_port 77788
+clt_rep_port 77779
+
+clt_pub_socket_timeout 500
+clt_dlr_socket_timeout 500
+clt_rep_socket_timeout 500
+inpoll_timeout 100
+outpoll_timeout 50
+
+write_period_ms 1000
+read_period_ms 1000
+resend_period_ms 10000
+print_stats_period_ms 1000
+
+service_discovery_config ServiceDiscoveryConfig
