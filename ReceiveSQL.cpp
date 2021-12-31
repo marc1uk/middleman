@@ -1808,8 +1808,13 @@ boost::posix_time::ptime ReceiveSQL::ToTimestamp(std::string timestring){
 std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
 	
 	// convert boost timestamp to time struct
-	// postgres timestamps are in the format "2015-10-02 11:16:34.678267+01"
+	// postgres timestamps are *printed* in the format "2015-10-02 11:16:34.678267+01"
 	// the trailing "+01" is number of hours in local timezone relative to UTC
+	// but they are *input* in ISO 8601 - i.e. 'YYYY-MM-DD HH:MM:SS.PPP TZ'
+	// where PPP is up to 6 fractional seconds, and TZ is an optional timezone
+	// (e.g. 'PST', 'Z' (i.e. UTC), or an offset from UTC '-8' for 8 hours ahead)
+	// (https://www.postgresql.org/docs/current/datatype-datetime.html#datatype-datetime-input)
+
 	// FIXME how do we get this? do we need to add it?
 	
 	// we can form time strings of our desired format most easily using a time struct
@@ -1820,7 +1825,7 @@ std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
 	char timestring[20];
 	sprintf(timestring, "%04d-%02d-%02d %02d:%02d:%02d",
 	        mytm.tm_year + 1900,
-	        mytm.tm_mon,
+	        mytm.tm_mon + 1,
 	        mytm.tm_mday,
 	        mytm.tm_hour,
 	        mytm.tm_min,
