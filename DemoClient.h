@@ -53,6 +53,8 @@ class DemoClient{
 	boost::posix_time::time_duration write_period;
 	// time between read queries
 	boost::posix_time::time_duration read_period;
+	// time between logging queries
+	boost::posix_time::time_duration log_period;
 	// time between resends if not acknowledged
 	boost::posix_time::time_duration resend_period;
 	// time between printing info about what we're doing
@@ -74,6 +76,7 @@ class DemoClient{
 	int get_ok;
 	boost::posix_time::time_duration elapsed_time;
 	std::string hostname;
+	int execute_iterations=0;
 	
 	// ignore a fraction of acknowledgements received to test resending capability
 	double ack_ignore_percent=0;

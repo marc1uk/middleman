@@ -19,16 +19,14 @@ bool DemoClient::Initialise(std::string configfile){
 	m_variables.Get("max_retries",max_retries);
 	m_variables.Get("ack_ignore_percent",ack_ignore_percent);
 	
-	// we have four zmq sockets:
+	// we have three zmq sockets:
 	// 1. [PUB]    one for sending write queries to all listeners (the master)
-	// 2. [DEALER] one for sending read queries round-robin
-	// 3. [DEALER] one for receiving responses to queries we've run
-	// 4. [PUB]    one for sending log messages
+	// 2. [DEALER] one for sending read queries round-robin and receving responses
+	// 3. [PUB]    one for sending log messages
 	
 	// specify the ports everything talks/listens on
 	int clt_pub_port = 77778;   // for sending write queries
 	int clt_dlr_port = 77777;   // for sending read queries
-	int clt_rep_port = 77779;   // for receiving replies
 	int log_pub_port = 77776;   // for sending log messages
 	// socket timeouts, so nothing blocks indefinitely
 	int clt_pub_socket_timeout=500;
@@ -42,7 +40,6 @@ bool DemoClient::Initialise(std::string configfile){
 	// Update with user-specified values.
 	m_variables.Get("clt_pub_port",clt_pub_port);
 	m_variables.Get("clt_dlr_port",clt_dlr_port);
-	m_variables.Get("clt_rep_port",clt_rep_port);
 	m_variables.Get("log_pub_port",log_pub_port);
 	m_variables.Get("clt_pub_socket_timeout",clt_pub_socket_timeout);
 	m_variables.Get("clt_dlr_socket_timeout",clt_dlr_socket_timeout);
@@ -173,7 +170,7 @@ bool DemoClient::Initialise(std::string configfile){
 	// we can now register the client sockets with the following:
 	utilities->AddService("psql_write", clt_pub_port);
 	utilities->AddService("psql_read",  clt_dlr_port);
-	utilities->AddService("psql_rep",   clt_rep_port);
+	utilities->AddService("logging",  log_pub_port);
 	
 	// if we need to we can remove it from the broadcasts with e.g:
 	//utilities->RemoveService("psql_write");
@@ -192,7 +189,9 @@ bool DemoClient::Initialise(std::string configfile){
 	// time between write queries
 	int write_period_ms = 1000;
 	// time between read queries
-	int read_timeout_ms = 10000;
+	int read_period_ms = 1000;
+	// time between logging messages
+	int log_period_ms = 1000;
 	// time to wait between resend attempts if not ack'd
 	int resend_period_ms = 5000;
 	// how often to print out stats on what we're sending
@@ -200,19 +199,22 @@ bool DemoClient::Initialise(std::string configfile){
 	
 	// Update with user-specified values.
 	m_variables.Get("write_period_ms",write_period_ms);
-	m_variables.Get("read_timeout_ms",read_timeout_ms);
+	m_variables.Get("read_period_ms",read_period_ms);
+	m_variables.Get("log_period_ms",log_period_ms);
 	m_variables.Get("resend_period_ms",resend_period_ms);
 	m_variables.Get("print_stats_period_ms",print_stats_period_ms);
 	
 	// convert times to boost for easy handling
 	write_period = boost::posix_time::milliseconds(write_period_ms);
-	read_period = boost::posix_time::milliseconds(read_timeout_ms);
+	read_period = boost::posix_time::milliseconds(read_period_ms);
+	log_period = boost::posix_time::milliseconds(log_period_ms);
 	resend_period = boost::posix_time::milliseconds(resend_period_ms);
 	print_stats_period = boost::posix_time::milliseconds(print_stats_period_ms);
 	
 	// initialise 'last send' times
 	last_write = boost::posix_time::microsec_clock::universal_time();
 	last_read = boost::posix_time::microsec_clock::universal_time();
+	last_log = boost::posix_time::microsec_clock::universal_time();
 	last_printout = boost::posix_time::microsec_clock::universal_time();
 	
 	// get the hostname of this machine for monitoring stats
@@ -232,6 +234,7 @@ bool DemoClient::Initialise(std::string configfile){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool DemoClient::Execute(){
+	++execute_iterations;
 	
 	// start with the reads.
 	// poll the input sockets
@@ -615,6 +618,9 @@ std::cout<<"no listener on read port"<<std::endl;
 		last_printout = boost::posix_time::microsec_clock::universal_time();
 	}
 	
+	// test the logging port
+	Log("Test log message "+std::to_string(execute_iterations),1);
+	
 	return true;
 }
 
@@ -706,7 +712,6 @@ bool DemoClient::Finalise(){
 	std::cout<<"Removing services"<<std::endl;
 	utilities->RemoveService("psql_write");
 	utilities->RemoveService("psql_read");
-	utilities->RemoveService("psql_rep");
 	
 	std::cout<<"Deleting ServiceDiscovery"<<std::endl;
 	delete service_discovery; service_discovery=nullptr;
@@ -731,63 +736,76 @@ bool DemoClient::Finalise(){
 
 bool DemoClient::Log(std::string logmessage, int severity){
 	
-	// check we had a listener ready
-	if(out_polls.at(2).revents & ZMQ_POLLOUT){
-		
-		// OK to send! Form the message
-		// the log message is a 4 part message
-		// 1. the identity of the sender (us)
-		// 2. time the message was logged
-		// 3. the severity
-		// 4. the message to log
-		
-		// first the host id
-		zmq::message_t host_id_zmq(clt_ID.length());
-		snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
-		
-		// then a timestamp
-		std::string timestamp;
-		std::string timestamp.resize(19);
-		time_t rawtime = time(NULL);
-		struct tm* timeinfo = localtime(&rawtime);
-		strftime(const_cast<char*>(timestamp.c_str()),20,"%F %T",timeinfo);
-		zmq::message_t message_timestamp_zmq(timestamp.size()+1);
-		snprintf((char*)message_timestamp_zmq.data(), timestamp.size()+1, "%s", timestamp.c_str());
-		
-		// then the severity
-		zmq::message_t message_severity_zmq(sizeof(severity));
-		memcpy(message_severity_zmq.data(), &severity, sizeof(severity));
-		
-		// then the log message
-		zmq::message_t message_data_zmq(logmessage.size()+1);
-		snprintf((char*)message_data_zmq.data(), logmessage.size()+1, "%s", logmessage.c_str());
-		
-		// send zmq message
-		if(not (log_pub_socket->send(host_id_zmq, ZMQ_SNDMORE))){
-			std::cerr<<"Error sending log message pt 0"<<std::endl;
-			printf("Error was: %s\n",errnoname(errno));
-			perror("which maps to: ");
-		} else if(not (log_pub_socket->send(message_timestamp_zmq, ZMQ_SNDMORE))){
-			std::cerr<<"Error sending log message pt 1"<<std::endl;
-			printf("Error was: %s\n",errnoname(errno));
-			perror("which maps to: ");
-		} else if(not (log_pub_socket->send(message_severity_zmq, ZMQ_SNDMORE))){
-			std::cerr<<"Error sending log message pt 2"<<std::endl;
-			printf("Error was: %s\n",errnoname(errno));
-			perror("which maps to: ");
-		} else if(not (log_pub_socket->send(message_data_zmq))){
-			std::cerr<<"Error sending log message pt 3"<<std::endl;
-			printf("Error was: %s\n",errnoname(errno));
-			perror("which maps to: ");
-		} else {
-			// else sent ok
-			++log_msgs_sent;
-			last_log = boost::posix_time::microsec_clock::universal_time();
-		}
-		
-	} // else no available listeners
+	bool all_ok = true;
 	
+	// check if we're due to send a log message
+	elapsed_time = boost::posix_time::microsec_clock::universal_time() - last_log;
+	elapsed_time = log_period - elapsed_time;
 	
-	return true;
+	if( elapsed_time.is_negative() ){
+	
+std::cout<<"time to send a log message"<<std::endl;
+		// check we had a listener ready
+		if(out_polls.at(2).revents & ZMQ_POLLOUT){
+std::cout<<"got a log listener"<<std::endl;
+		
+			// OK to send! Form the message
+			// the log message is a 4 part message
+			// 1. the identity of the sender (us)
+			// 2. time the message was logged
+			// 3. the severity
+			// 4. the message to log
+			
+			// first the host id
+			zmq::message_t host_id_zmq(clt_ID.length());
+			snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
+			
+			// then a timestamp
+			std::string timestamp;
+			timestamp.resize(19);
+			time_t rawtime = time(NULL);
+			struct tm* timeinfo = localtime(&rawtime);
+			strftime(const_cast<char*>(timestamp.c_str()),20,"%F %T",timeinfo);
+			zmq::message_t message_timestamp_zmq(timestamp.size()+1);
+			snprintf((char*)message_timestamp_zmq.data(), timestamp.size()+1, "%s", timestamp.c_str());
+			
+			// then the severity
+			zmq::message_t message_severity_zmq(sizeof(severity));
+			memcpy(message_severity_zmq.data(), &severity, sizeof(severity));
+			
+			// then the log message
+			zmq::message_t message_data_zmq(logmessage.size()+1);
+			snprintf((char*)message_data_zmq.data(), logmessage.size()+1, "%s", logmessage.c_str());
+			
+			// send zmq message
+std::cout<<"Sending logmessage '"<<logmessage<<"'"<<std::endl;
+			all_ok = false;
+			if(not (log_pub_socket->send(host_id_zmq, ZMQ_SNDMORE))){
+				std::cerr<<"Error sending log message pt 0"<<std::endl;
+				printf("Error was: %s\n",errnoname(errno));
+				perror("which maps to: ");
+			} else if(not (log_pub_socket->send(message_timestamp_zmq, ZMQ_SNDMORE))){
+				std::cerr<<"Error sending log message pt 1"<<std::endl;
+				printf("Error was: %s\n",errnoname(errno));
+				perror("which maps to: ");
+			} else if(not (log_pub_socket->send(message_severity_zmq, ZMQ_SNDMORE))){
+				std::cerr<<"Error sending log message pt 2"<<std::endl;
+				printf("Error was: %s\n",errnoname(errno));
+				perror("which maps to: ");
+			} else if(not (log_pub_socket->send(message_data_zmq))){
+				std::cerr<<"Error sending log message pt 3"<<std::endl;
+				printf("Error was: %s\n",errnoname(errno));
+				perror("which maps to: ");
+			} else {
+				// else sent ok
+				all_ok = true;
+				++log_msgs_sent;
+				last_log = boost::posix_time::microsec_clock::universal_time();
+			}
+			
+		} // else no available listeners
+	} // else not yet time to send a log message
+	
+	return all_ok;
 }
 
