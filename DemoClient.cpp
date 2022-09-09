@@ -19,18 +19,21 @@ bool DemoClient::Initialise(std::string configfile){
 	m_variables.Get("max_retries",max_retries);
 	m_variables.Get("ack_ignore_percent",ack_ignore_percent);
 	
-	// we have three zmq sockets:
+	// we have four zmq sockets:
 	// 1. [PUB]    one for sending write queries to all listeners (the master)
 	// 2. [DEALER] one for sending read queries round-robin
 	// 3. [DEALER] one for receiving responses to queries we've run
+	// 4. [PUB]    one for sending log messages
 	
 	// specify the ports everything talks/listens on
 	int clt_pub_port = 77778;   // for sending write queries
 	int clt_dlr_port = 77777;   // for sending read queries
 	int clt_rep_port = 77779;   // for receiving replies
+	int log_pub_port = 77776;   // for sending log messages
 	// socket timeouts, so nothing blocks indefinitely
 	int clt_pub_socket_timeout=500;
 	int clt_dlr_socket_timeout=500;  // both send and receive
+	int log_pub_socket_timeout=500;
 	
 	// poll timeouts - units are milliseconds
 	inpoll_timeout=500;
@@ -40,8 +43,10 @@ bool DemoClient::Initialise(std::string configfile){
 	m_variables.Get("clt_pub_port",clt_pub_port);
 	m_variables.Get("clt_dlr_port",clt_dlr_port);
 	m_variables.Get("clt_rep_port",clt_rep_port);
+	m_variables.Get("log_pub_port",log_pub_port);
 	m_variables.Get("clt_pub_socket_timeout",clt_pub_socket_timeout);
 	m_variables.Get("clt_dlr_socket_timeout",clt_dlr_socket_timeout);
+	m_variables.Get("log_pub_socket_timeout",log_pub_socket_timeout);
 	m_variables.Get("inpoll_timeout",inpoll_timeout);
 	m_variables.Get("outpoll_timeout",outpoll_timeout);
 	
@@ -143,10 +148,20 @@ bool DemoClient::Initialise(std::string configfile){
 	zmq::pollitem_t clt_dlr_socket_pollout = zmq::pollitem_t{*clt_dlr_socket,0,ZMQ_POLLOUT,0};
 	clt_dlr_socket->bind(std::string("tcp://*:")+std::to_string(clt_dlr_port));
 	
+	// socket to send log messages
+	// ---------------------------
+	log_pub_socket = new zmq::socket_t(*context, ZMQ_PUB);
+	log_pub_socket->setsockopt(ZMQ_SNDTIMEO, log_pub_socket_timeout);
+	// don't linger too long, it looks like the program crashed.
+	log_pub_socket->setsockopt(ZMQ_LINGER, 10);
+	log_pub_socket->bind(std::string("tcp://*:")+std::to_string(log_pub_port));
+	zmq::pollitem_t log_pub_socket_pollout= zmq::pollitem_t{*log_pub_socket,0,ZMQ_POLLOUT,0};
+	
 	// bundle the polls together so we can do all of them at once
 	in_polls = std::vector<zmq::pollitem_t>{clt_dlr_socket_pollin};
 	out_polls = std::vector<zmq::pollitem_t>{clt_pub_socket_pollout,
-	                                         clt_dlr_socket_pollout};
+	                                         clt_dlr_socket_pollout,
+	                                         log_pub_socket_pollout};
 	
 	/*             Register Services             */
 	/* ----------------------------------------- */
@@ -708,3 +723,71 @@ bool DemoClient::Finalise(){
 	
 	std::cout<<"Finalise done"<<std::endl;
 }
+
+
+// Helper Functions
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool DemoClient::Log(std::string logmessage, int severity){
+	
+	// check we had a listener ready
+	if(out_polls.at(2).revents & ZMQ_POLLOUT){
+		
+		// OK to send! Form the message
+		// the log message is a 4 part message
+		// 1. the identity of the sender (us)
+		// 2. time the message was logged
+		// 3. the severity
+		// 4. the message to log
+		
+		// first the host id
+		zmq::message_t host_id_zmq(clt_ID.length());
+		snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
+		
+		// then a timestamp
+		std::string timestamp;
+		std::string timestamp.resize(19);
+		time_t rawtime = time(NULL);
+		struct tm* timeinfo = localtime(&rawtime);
+		strftime(const_cast<char*>(timestamp.c_str()),20,"%F %T",timeinfo);
+		zmq::message_t message_timestamp_zmq(timestamp.size()+1);
+		snprintf((char*)message_timestamp_zmq.data(), timestamp.size()+1, "%s", timestamp.c_str());
+		
+		// then the severity
+		zmq::message_t message_severity_zmq(sizeof(severity));
+		memcpy(message_severity_zmq.data(), &severity, sizeof(severity));
+		
+		// then the log message
+		zmq::message_t message_data_zmq(logmessage.size()+1);
+		snprintf((char*)message_data_zmq.data(), logmessage.size()+1, "%s", logmessage.c_str());
+		
+		// send zmq message
+		if(not (log_pub_socket->send(host_id_zmq, ZMQ_SNDMORE))){
+			std::cerr<<"Error sending log message pt 0"<<std::endl;
+			printf("Error was: %s\n",errnoname(errno));
+			perror("which maps to: ");
+		} else if(not (log_pub_socket->send(message_timestamp_zmq, ZMQ_SNDMORE))){
+			std::cerr<<"Error sending log message pt 1"<<std::endl;
+			printf("Error was: %s\n",errnoname(errno));
+			perror("which maps to: ");
+		} else if(not (log_pub_socket->send(message_severity_zmq, ZMQ_SNDMORE))){
+			std::cerr<<"Error sending log message pt 2"<<std::endl;
+			printf("Error was: %s\n",errnoname(errno));
+			perror("which maps to: ");
+		} else if(not (log_pub_socket->send(message_data_zmq))){
+			std::cerr<<"Error sending log message pt 3"<<std::endl;
+			printf("Error was: %s\n",errnoname(errno));
+			perror("which maps to: ");
+		} else {
+			// else sent ok
+			++log_msgs_sent;
+			last_log = boost::posix_time::microsec_clock::universal_time();
+		}
+		
+	} // else no available listeners
+	
+	
+	return true;
+}
+

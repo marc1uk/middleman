@@ -28,6 +28,7 @@ class DemoClient{
 	private:
 	
 	bool GetResourceUsage(std::string& resource_json);
+	bool Log(std::string logmessage, int severity);
 	
 	Store m_variables;
 	
@@ -36,6 +37,7 @@ class DemoClient{
 	
 	zmq::context_t* context = nullptr;
 	
+	zmq::socket_t* log_pub_socket = nullptr;
 	zmq::socket_t* clt_pub_socket = nullptr;
 	zmq::socket_t* clt_dlr_socket = nullptr;
 	zmq::socket_t* clt_rep_socket = nullptr;
@@ -61,6 +63,8 @@ class DemoClient{
 	boost::posix_time::ptime last_read;
 	// when we last printed out stats about what we're doing
 	boost::posix_time::ptime last_printout;
+	// when we last sent a logging message
+	boost::posix_time::ptime last_log;
 	
 	// messages waiting acknowledgement
 	std::map<int, Message> ack_queue;
@@ -79,6 +83,7 @@ class DemoClient{
 	std::string clt_ID;
 	
 	unsigned int msg_id = 0;
+	int log_msgs_sent=0;
 	int read_queries_sent=0;
 	int write_queries_sent=0;
 	int write_queries_resent = 0;

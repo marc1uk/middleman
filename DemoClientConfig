@@ -6,10 +6,12 @@ max_retries 3
 clt_dlr_port 77777
 clt_pub_port 77788
 clt_rep_port 77779
+log_pub_port 77776
 
 clt_pub_socket_timeout 500
 clt_dlr_socket_timeout 500
 clt_rep_socket_timeout 500
+log_pub_socket_timeout 500
 inpoll_timeout 100
 outpoll_timeout 50
 
