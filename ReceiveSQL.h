@@ -109,6 +109,7 @@ class ReceiveSQL{
 	// (afaict you can't just disconnect and reconnect a socket...)
 	int log_sub_port;
 	int clt_sub_port;
+	int log_pub_port;
 	int clt_sub_socket_timeout;
 	int log_sub_socket_timeout;
 	

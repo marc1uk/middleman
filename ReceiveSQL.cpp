@@ -267,7 +267,7 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// specify the ports everything talks on. All listeners connect to the remote port
 	// which is picked up by ServiceDiscovery
 	mm_snd_port =  77797;       // for sending middleman beacons
-	int log_pub_port = 77776;   // for sending logging messages to the master
+	log_pub_port = 77776;       // for sending logging messages to the master
 	// socket timeouts, so nothing blocks indefinitely
 	clt_sub_socket_timeout=500;
 	int clt_rtr_socket_timeout=500; // used for both sends and receives
@@ -358,11 +358,11 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 		// -------------------------------------------------------
 		log_sub_socket = new zmq::socket_t(*context, ZMQ_SUB);
 		log_sub_socket->setsockopt(ZMQ_RCVTIMEO, log_sub_socket_timeout);
-		// this socket never receives, so a recieve timeout is irrelevant.
+		// this socket never sends, so a send timeout is irrelevant.
 		// don't linger too long, it looks like the program crashed.
 		log_sub_socket->setsockopt(ZMQ_LINGER, 10);
-		// we'll connect this socket to clients with the utilities class
 		log_sub_socket->setsockopt(ZMQ_SUBSCRIBE,"",0);
+		// we'll connect this socket to clients with the utilities class
 	}
 	
 	// socket to send log queries to the master, if not us
@@ -419,15 +419,15 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	// multicast address and port to listen for other services on.
 	std::string broadcast_address = "239.192.1.1";
 	int broadcast_port = 5000;
-	service_discovery_configstore.Set("broadcast_address",broadcast_address);
-	service_discovery_configstore.Set("broadcast_port",broadcast_port);
+	service_discovery_configstore.Get("broadcast_address",broadcast_address);
+	service_discovery_configstore.Get("broadcast_port",broadcast_port);
 	
 	// how frequently to broadcast - note that we send intermittent messages about our status
 	// over the mm_snd_port anyway, so the ServiceDiscovery is only used for the initial discovery.
 	// since we also use the mm_snd_port and mm_rcv_port for negotiation, we can't do without them,
 	// so it's probably not worth trying to move this functionality into the ServiceDiscovery class.
 	int broadcast_period_sec = 5;
-	service_discovery_configstore.Set("broadcast_period",broadcast_period_sec);
+	service_discovery_configstore.Get("broadcast_period",broadcast_period_sec);
 	
 	// whenever we broadcast any services the ServiceDiscovery class automatically advertises
 	// the presence of a remote control port. It will attempt to check the status of that remote
@@ -453,7 +453,7 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	// services that it hasn't heard from after a while so that it doesn't retain stale ones.
 	// How long before we prune, in seconds
 	int kick_secs = 30;
-	service_discovery_configstore.Set("kick_secs",kick_secs);
+	service_discovery_configstore.Get("kick_secs",kick_secs);
 	
 	// construct the ServiceDiscovery instance.
 	service_discovery = new ServiceDiscovery(send_broadcasts, rcv_broadcasts, remote_control_port,
@@ -483,6 +483,9 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	
 	// we can also register services we wish to broadcast as follows:
 	utilities->AddService("middleman", mm_snd_port);
+	if(!am_master){
+		utilities->AddService("logging",log_pub_port);
+	}
 	
 	// note that it is not necessary to register the RemoteControl service,
 	// this is automatically done by the ServiceDiscovery class.
@@ -759,6 +762,7 @@ bool ReceiveSQL::GetClientLogMessages(){
 	
 	// see if we had any write requests from clients
 	if(in_polls.at(3).revents & ZMQ_POLLIN){
+		Log("got a log message from client",4);
 		
 		++log_msgs_recvd;
 		// we did. receive next message.
@@ -792,6 +796,7 @@ bool ReceiveSQL::GetClientLogMessages(){
 		std::string log_str(reinterpret_cast<const char*>(outputs.at(3).data()));
 		
 		in_log_queue.emplace_back(client_str, timestamp, severity, log_str);
+		Log("Put client logmessage in queue: '"+log_str+"'",5);
 	} // else no log messages from clients
 /*
 else {
@@ -1019,22 +1024,27 @@ bool ReceiveSQL::RunNextLogMsg(){
 	
 	// insert our next log message, if we have one
 	if(in_log_queue.size()){
+		Log("Logging next message to DB: we have "+std::to_string(in_log_queue.size())
+		    +" messages to process",5);
 		
 		LogMsg& next_msg = in_log_queue.front();
 		get_ok = LogToDb(next_msg);
 		
 		if(not get_ok){
+			std::cerr<<"LogToDb error!"<<std::endl;
 		
 			// something went wrong. already logged.
 			if(next_msg.retries>=max_send_attempts){
 				// give up on it
 				in_log_queue.pop_front();
 				++in_logs_failed;
+				std::cerr<<"giving up on this message"<<std::endl;
 				// FIXME do not try to log the failure of log message insertions...?
 			} else {
 				// Leave in queue to try again later.
 				// FIXME better error handling to know if this is worth doing.
 				++next_msg.retries;
+				std::cerr<<"will retry later"<<std::endl;
 				return false;
 			}
 			
@@ -1707,6 +1717,9 @@ bool ReceiveSQL::UpdateRole(){
 		std::string err;
 		get_ok = m_rundb.Promote(60,&err);
 		
+		// should we also stop broadcasting ourself as a source of logging messages?
+		utilities->RemoveService("logging");
+		
 		// check for errors
 		if(get_ok){
 			Log("Promotion success",1);
@@ -1754,6 +1767,9 @@ bool ReceiveSQL::UpdateRole(){
 			// drop any outstanding write messages
 			wrt_txn_queue.clear();
 			in_log_queue.clear();
+			
+			// we also need to start advertising ourself as a source of logging messages
+			utilities->AddService("logging", log_pub_port);
 			
 		} else {
 			

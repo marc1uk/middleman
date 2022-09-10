@@ -1,5 +1,5 @@
 broadcast_address 239.192.1.1
 broadcast_port 5000
 broadcast_period 5    # seconds
-client_name DemoClient # name of the 'toolchain' service for remotecontrol
+client_name Middleman_Control # name of the 'toolchain' service for remotecontrol
 kick_secs 30
