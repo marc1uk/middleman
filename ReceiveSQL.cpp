@@ -660,25 +660,18 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			resp_queue.erase(key);
 		
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
-			Log("New query, added to queue",10);
+			Log("New query, adding to write queue",10);
+			// construct a Query object to encapsulate the query
+			Query msg;
 			if(outputs.size()==4){
 				Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(2).data()))+"'",20);
+				msg = Query(outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3));
 			} else {
 				Log("INSERTING INTO TABLE '"+outputs.at(4)+"' RECORD FROM JSON '"+outputs.at(5)+"'",20);
-				// if using this method, part 4 should be the name of the table to insert the record into
-				// check that it's valid
-				get_ok = CheckValidTable(outputs.at(2),outputs.at(3));
-				if(!get_ok){
-					Log("INVALID TABLE '"+outputs.at(3)+"' in DB '"+outputs.at(2)+"'",0);
-					return false;
-				}
+				msg = Query(outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3), outputs.at(4));
 			}
-			// we don't have it waiting either in to-run or to-respond queues.
-			// padd the vector with an extra element so we can call a common constructor
-			outputs.resize(5,"");
-			Query msg{outputs.at(0), outputs.at(1), outputs.at(2),outputs.at(3),outputs.at(4)};
 			wrt_txn_queue.emplace(key, msg);
-		
+					
 		} // else we've already got it queued, ignore it.
 		
 	}// else no messages from clients
@@ -986,10 +979,16 @@ bool ReceiveSQL::RunNextWriteQuery(){
 		
 		Query& next_msg = wrt_txn_queue.begin()->second;
 		std::string err;
-		// TODO need to pass a variable saying which database to put it in!!!
-		//next_msg.query_ok = m_rundb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		next_msg.query_ok = m_monitoringdb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		
+		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
+		Postgres* thedb=nullptr;
+		if(next_msg.database=="rundb")        thedb = &m_rundb;
+		if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
+		if(thedb==nullptr){
+			err="Middleman: Uknown database '"+next_msg.database +"'";
+			next_msg.query_ok=false;
+		} else {
+			next_msg.query_ok = thedb->QueryAsJsons(next_msg.table, &next_msg.values, &err);
+		}
 		if(not next_msg.query_ok){
 			Log(Concat("Write query failed! Query was: '",next_msg.query,"', error was: '",err,"'"),1);
 			++write_queries_failed;
@@ -1015,12 +1014,19 @@ bool ReceiveSQL::RunNextReadQuery(){
 		
 		Query& next_msg = rd_txn_queue.begin()->second;
 		std::string err;
-		// TODO need to pass a variable saying which database to use
-		//next_msg.query_ok = m_rundb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		next_msg.query_ok = m_monitoringdb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
+		Postgres* thedb=nullptr;
+		if(next_msg.database=="rundb")        thedb = &m_rundb;
+		if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
+		if(thedb==nullptr){
+			err="Middleman: Uknown database '"+next_msg.database +"'";
+			next_msg.query_ok=false;
+		} else {
+			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		}
 		if(not next_msg.query_ok){
 			Log(Concat("Read query failed! Query was: '",next_msg.query,"', error was: '",err,"'"),1);
-			++read_qeuries_failed;
+			++read_queries_failed;
 			next_msg.response = std::vector<std::string>{err};
 		}
 		
@@ -1400,7 +1406,7 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("mm_broadcasts_recvd", mm_broadcasts_recvd);
 		MonitoringStore.Set("mm_broadcast_recv_fails", mm_broadcast_recv_fails);
 		MonitoringStore.Set("write_queries_failed", write_queries_failed);
-		MonitoringStore.Set("read_qeuries_failed", read_qeuries_failed);
+		MonitoringStore.Set("read_queries_failed", read_queries_failed);
 		MonitoringStore.Set("in_logs_failed", in_logs_failed);
 		MonitoringStore.Set("acks_sent", acks_sent);
 		MonitoringStore.Set("ack_send_fails", ack_send_fails);

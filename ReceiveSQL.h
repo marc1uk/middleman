@@ -183,7 +183,7 @@ class ReceiveSQL{
 	
 	// number of postgres queries that failed to run
 	unsigned long write_queries_failed;
-	unsigned long read_qeuries_failed;
+	unsigned long read_queries_failed;
 	
 	// number of postgres monitoring insertions that failed to run
 	unsigned long in_logs_failed;
