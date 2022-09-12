@@ -625,8 +625,8 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			return false;
 		}
 		
-		// received message format should be a 3-part message
-		if(outputs.size()!=3){
+		// received message format should be a 4- or 5-part message
+		if(outputs.size()!=4 && outputs.size()!=5){
 			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
 			++write_query_recv_fails;
 			return false;
@@ -635,7 +635,9 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		// expected parts are:
 		// 1. ZMQ_IDENTITY of the sender client
 		// 2. a unique ID used by the sender to match acknowledgements to sent messages
-		// 3. the SQL statement
+		// 3. a database name 
+		// 4. an SQL statement OR the name of a table to insert into
+		// 5. a json object of the values to insert (if 4 is just a table name)
 		// to track messages already handled, we form a key from the client ID and message ID,
 		// and will use this to track message processing
 		
@@ -659,9 +661,22 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("New query, added to queue",10);
-			Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(2).data()))+"'",20);
+			if(outputs.size()==4){
+				Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(2).data()))+"'",20);
+			} else {
+				Log("INSERTING INTO TABLE '"+outputs.at(4)+"' RECORD FROM JSON '"+outputs.at(5)+"'",20);
+				// if using this method, part 4 should be the name of the table to insert the record into
+				// check that it's valid
+				get_ok = CheckValidTable(outputs.at(2),outputs.at(3));
+				if(!get_ok){
+					Log("INVALID TABLE '"+outputs.at(3)+"' in DB '"+outputs.at(2)+"'",0);
+					return false;
+				}
+			}
 			// we don't have it waiting either in to-run or to-respond queues.
-			Query msg{outputs.at(0), outputs.at(1), outputs.at(2)};
+			// padd the vector with an extra element so we can call a common constructor
+			outputs.resize(5,"");
+			Query msg{outputs.at(0), outputs.at(1), outputs.at(2),outputs.at(3),outputs.at(4)};
 			wrt_txn_queue.emplace(key, msg);
 		
 		} // else we've already got it queued, ignore it.
@@ -696,7 +711,7 @@ bool ReceiveSQL::GetClientReadQueries(){
 		}
 		
 		// received message format should be a 3-part message
-		if(outputs.size()!=3){
+		if(outputs.size()!=4){
 			Log(Concat("unexpected ",outputs.size()," part message in Read query from client"),1);
 			++read_query_recv_fails;
 			return false;
@@ -705,7 +720,8 @@ bool ReceiveSQL::GetClientReadQueries(){
 		// The received message format should be the same format as for Write queries.
 		// 1. client ID
 		// 2. message ID
-		// 3. SQL statement.
+		// 3. database name
+		// 4. SQL statement
 		// again the first two parts form a key used to track messages already handled.
 		
 		std::string client_str(reinterpret_cast<const char*>(outputs.at(0).data()));
@@ -720,10 +736,10 @@ bool ReceiveSQL::GetClientReadQueries(){
 			
 		} else if(rd_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("RECEIVED READ QUERY FROM CLIENT '"+client_str+"' with message id: "+std::to_string(msg_int),3);
-			Log("QUERY WAS: "+std::string(reinterpret_cast<const char*>(outputs.at(2).data())),10);
+			Log("QUERY WAS: "+std::string(reinterpret_cast<const char*>(outputs.at(3).data())),10);
 			
 			// do a safety check to ensure this is actually a write query (optional)
-			std::string query(reinterpret_cast<const char*>(outputs.at(2).data()));
+			std::string query(reinterpret_cast<const char*>(outputs.at(3).data()));
 			
 			bool is_write_txn = (query.find("INSERT")!=std::string::npos) ||
 								(query.find("UPDATE")!=std::string::npos) ||
@@ -732,13 +748,13 @@ bool ReceiveSQL::GetClientReadQueries(){
 			
 			if(not is_write_txn || (am_master && handle_unexpected_writes)){
 				// sanity check passed
-				Query msg{outputs.at(0), outputs.at(1), outputs.at(2)};
+				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
 				rd_txn_queue.emplace(key, msg);
 				
 			} else {
 				// otherwise send a response saying this query should go via the PUB port
 				std::string err = "write transaction received by standby dealer socket";
-				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), 0, err};
+				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3), 0, err};
 				resp_queue.emplace(key, msg);
 				Log("Write transaction received on read transaction port",1);
 				return false;
