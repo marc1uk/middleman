@@ -625,8 +625,8 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			return false;
 		}
 		
-		// received message format should be a 3-part message
-		if(outputs.size()!=3){
+		// received message format should be a 4-part message
+		if(outputs.size()!=4){
 			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
 			++write_query_recv_fails;
 			return false;
@@ -635,7 +635,8 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		// expected parts are:
 		// 1. ZMQ_IDENTITY of the sender client
 		// 2. a unique ID used by the sender to match acknowledgements to sent messages
-		// 3. the SQL statement
+		// 3. a database name 
+		// 4. an SQL statement
 		// to track messages already handled, we form a key from the client ID and message ID,
 		// and will use this to track message processing
 		
@@ -658,12 +659,13 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			resp_queue.erase(key);
 		
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
-			Log("New query, added to queue",10);
+			Log("New query, adding to write queue",10);
 			Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(2).data()))+"'",20);
 			// we don't have it waiting either in to-run or to-respond queues.
-			Query msg{outputs.at(0), outputs.at(1), outputs.at(2)};
+			// construct a Query object to encapsulate the query
+			Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
 			wrt_txn_queue.emplace(key, msg);
-		
+			
 		} // else we've already got it queued, ignore it.
 		
 	}// else no messages from clients
@@ -695,8 +697,8 @@ bool ReceiveSQL::GetClientReadQueries(){
 			return false;
 		}
 		
-		// received message format should be a 3-part message
-		if(outputs.size()!=3){
+		// received message format should be a 4-part message
+		if(outputs.size()!=4){
 			Log(Concat("unexpected ",outputs.size()," part message in Read query from client"),1);
 			++read_query_recv_fails;
 			return false;
@@ -705,7 +707,8 @@ bool ReceiveSQL::GetClientReadQueries(){
 		// The received message format should be the same format as for Write queries.
 		// 1. client ID
 		// 2. message ID
-		// 3. SQL statement.
+		// 3. database name
+		// 4. SQL statement
 		// again the first two parts form a key used to track messages already handled.
 		
 		std::string client_str(reinterpret_cast<const char*>(outputs.at(0).data()));
@@ -720,10 +723,10 @@ bool ReceiveSQL::GetClientReadQueries(){
 			
 		} else if(rd_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("RECEIVED READ QUERY FROM CLIENT '"+client_str+"' with message id: "+std::to_string(msg_int),3);
-			Log("QUERY WAS: "+std::string(reinterpret_cast<const char*>(outputs.at(2).data())),10);
+			Log("QUERY WAS: "+std::string(reinterpret_cast<const char*>(outputs.at(3).data())),10);
 			
 			// do a safety check to ensure this is actually a write query (optional)
-			std::string query(reinterpret_cast<const char*>(outputs.at(2).data()));
+			std::string query(reinterpret_cast<const char*>(outputs.at(3).data()));
 			
 			bool is_write_txn = (query.find("INSERT")!=std::string::npos) ||
 								(query.find("UPDATE")!=std::string::npos) ||
@@ -732,13 +735,13 @@ bool ReceiveSQL::GetClientReadQueries(){
 			
 			if(not is_write_txn || (am_master && handle_unexpected_writes)){
 				// sanity check passed
-				Query msg{outputs.at(0), outputs.at(1), outputs.at(2)};
+				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
 				rd_txn_queue.emplace(key, msg);
 				
 			} else {
 				// otherwise send a response saying this query should go via the PUB port
 				std::string err = "write transaction received by standby dealer socket";
-				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), 0, err};
+				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3), 0, err};
 				resp_queue.emplace(key, msg);
 				Log("Write transaction received on read transaction port",1);
 				return false;
@@ -970,10 +973,16 @@ bool ReceiveSQL::RunNextWriteQuery(){
 		
 		Query& next_msg = wrt_txn_queue.begin()->second;
 		std::string err;
-		// TODO need to pass a variable saying which database to put it in!!!
-		//next_msg.query_ok = m_rundb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		next_msg.query_ok = m_monitoringdb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		
+		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
+		Postgres* thedb=nullptr;
+		if(next_msg.database=="rundb")        thedb = &m_rundb;
+		if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
+		if(thedb==nullptr){
+			err="Middleman: Uknown database '"+next_msg.database +"'";
+			next_msg.query_ok=false;
+		} else {
+			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		}
 		if(not next_msg.query_ok){
 			Log(Concat("Write query failed! Query was: '",next_msg.query,"', error was: '",err,"'"),1);
 			++write_queries_failed;
@@ -999,12 +1008,19 @@ bool ReceiveSQL::RunNextReadQuery(){
 		
 		Query& next_msg = rd_txn_queue.begin()->second;
 		std::string err;
-		// TODO need to pass a variable saying which database to use
-		//next_msg.query_ok = m_rundb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		next_msg.query_ok = m_monitoringdb.QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
+		Postgres* thedb=nullptr;
+		if(next_msg.database=="rundb")        thedb = &m_rundb;
+		if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
+		if(thedb==nullptr){
+			err="Middleman: Uknown database '"+next_msg.database +"'";
+			next_msg.query_ok=false;
+		} else {
+			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		}
 		if(not next_msg.query_ok){
 			Log(Concat("Read query failed! Query was: '",next_msg.query,"', error was: '",err,"'"),1);
-			++read_qeuries_failed;
+			++read_queries_failed;
 			next_msg.response = std::vector<std::string>{err};
 		}
 		
@@ -1384,7 +1400,7 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("mm_broadcasts_recvd", mm_broadcasts_recvd);
 		MonitoringStore.Set("mm_broadcast_recv_fails", mm_broadcast_recv_fails);
 		MonitoringStore.Set("write_queries_failed", write_queries_failed);
-		MonitoringStore.Set("read_qeuries_failed", read_qeuries_failed);
+		MonitoringStore.Set("read_queries_failed", read_queries_failed);
 		MonitoringStore.Set("in_logs_failed", in_logs_failed);
 		MonitoringStore.Set("acks_sent", acks_sent);
 		MonitoringStore.Set("ack_send_fails", ack_send_fails);
