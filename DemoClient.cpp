@@ -416,8 +416,8 @@ std::cout<<"no incoming messages to read"<<std::endl;
 			
 			// first the sender id
 			// FIXME should this not be size+1 rather than length?
-			zmq::message_t host_id_zmq(clt_ID.length());
-			snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
+			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// then a new message id
 			++msg_id;
@@ -485,8 +485,8 @@ std::cout<<"no listener on write port"<<std::endl;
 			// format zmq message
 			
 			// first the host id
-			zmq::message_t host_id_zmq(clt_ID.length());
-			snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
+			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// then a new message id
 			++msg_id;
@@ -562,8 +562,8 @@ std::cout<<"no listener on read port"<<std::endl;
 			// format zmq message
 			
 			// hostname
-			zmq::message_t host_id_zmq(clt_ID.length());
-			snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
+			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// use same message id
 			zmq::message_t message_id_zmq(sizeof(next_msg_id));
@@ -781,8 +781,8 @@ std::cout<<"got a log listener"<<std::endl;
 			// 4. the message to log
 			
 			// first the host id
-			zmq::message_t host_id_zmq(clt_ID.length());
-			snprintf((char*)host_id_zmq.data(), clt_ID.length(), "%s", clt_ID.c_str());
+			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// then a timestamp
 			std::string timestamp;
