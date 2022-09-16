@@ -1908,8 +1908,9 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, zmq::message_t& message){
 
 bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
 	// form the zmq::message_t
-	zmq::message_t message(messagedata.size());
-	memcpy(message.data(), messagedata.data(), messagedata.size());
+	zmq::message_t message(messagedata.size()+1);
+	//memcpy(message.data(), messagedata.data(), messagedata.size());
+	snprintf((char*)message.data(), messagedata.size()+1, "%s", messagedata.c_str());
 	
 	// send it with given SNDMORE flag
 	bool send_ok;
@@ -1928,8 +1929,9 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> m
 	for(int i=0; i<(messages.size()-1); ++i){
 		
 		// form zmq::message_t
-		zmq::message_t message(messages.at(i).size());
+		zmq::message_t message(messages.at(i).size()+1);
 		memcpy(message.data(), messages.at(i).data(), messages.at(i).size());
+		snprintf((char*)message.data(), messages.at(i).size()+1, "%s", messages.at(i).c_str());
 		
 		// send this part
 		bool send_ok = sock->send(message, ZMQ_SNDMORE);
@@ -1939,8 +1941,9 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> m
 	}
 	
 	// form the zmq::message_t for the last part
-	zmq::message_t message(messages.back().size());
-	memcpy(message.data(), messages.back().data(), messages.back().size());
+	zmq::message_t message(messages.back().size()+1);
+	//memcpy(message.data(), messages.back().data(), messages.back().size());
+	snprintf((char*)message.data(), messages.back().size()+1, "%s", messages.back().c_str());
 	
 	// send it with, or without SNDMORE flag as requested
 	bool send_ok;
