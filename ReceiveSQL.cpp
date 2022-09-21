@@ -1,6 +1,8 @@
 /* vim:set noexpandtab tabstop=4 wrap filetype=cpp */
 #include "ReceiveSQL.h"
 #include <exception>
+#include <stdio.h>
+#include <cstring>
 
 // TODO: invoking pg_promote requires either superuser privileges, or explicit granting
 // of EXECUTE on the function pg_promote. We should grant this to the middleman,
@@ -628,6 +630,12 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		// received message format should be a 4-part message
 		if(outputs.size()!=4){
 			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
+			std::string client_str="-"; unsigned int msg_int=-1; std::string dbname="-";
+			if(outputs.size()>0) client_str = reinterpret_cast<char*>(outputs.at(0).data());
+			if(outputs.size()>1) msg_int = *reinterpret_cast<int*>(outputs.at(1).data());
+			if(outputs.size()>2) dbname = reinterpret_cast<char*>(outputs.at(2).data());
+			std::cout<<"client: '"<<client_str<<"', msg_id: "<<msg_int<<", db: '"<<dbname<<"'"<<std::endl;
+
 			++write_query_recv_fails;
 			return false;
 		}
@@ -660,7 +668,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("New query, adding to write queue",10);
-			Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(2).data()))+"'",20);
+			Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(3).data()))+"'",20);
 			// we don't have it waiting either in to-run or to-respond queues.
 			// construct a Query object to encapsulate the query
 			Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
@@ -992,7 +1000,7 @@ bool ReceiveSQL::RunNextWriteQuery(){
 		// push the response into the queue
 		resp_queue.emplace(wrt_txn_queue.begin()->first, next_msg);
 		// remove the query from the queue
-		wrt_txn_queue.erase(wrt_txn_queue.begin()->first);
+		wrt_txn_queue.erase(wrt_txn_queue.begin());
 		
 	} // else no postgresql transactions to run
 	
@@ -1908,7 +1916,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, zmq::message_t& message){
 
 bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
 	// form the zmq::message_t
-	zmq::message_t message(messagedata.size()+1);
+	zmq::message_t message(messagedata.size());
 	//memcpy(message.data(), messagedata.data(), messagedata.size());
 	snprintf((char*)message.data(), messagedata.size()+1, "%s", messagedata.c_str());
 	
@@ -1929,7 +1937,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> m
 	for(int i=0; i<(messages.size()-1); ++i){
 		
 		// form zmq::message_t
-		zmq::message_t message(messages.at(i).size()+1);
+		zmq::message_t message(messages.at(i).size());
 		memcpy(message.data(), messages.at(i).data(), messages.at(i).size());
 		snprintf((char*)message.data(), messages.at(i).size()+1, "%s", messages.at(i).c_str());
 		
@@ -1941,7 +1949,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> m
 	}
 	
 	// form the zmq::message_t for the last part
-	zmq::message_t message(messages.back().size()+1);
+	zmq::message_t message(messages.back().size());
 	//memcpy(message.data(), messages.back().data(), messages.back().size());
 	snprintf((char*)message.data(), messages.back().size()+1, "%s", messages.back().c_str());
 	
@@ -1988,20 +1996,26 @@ bool ReceiveSQL::Receive(zmq::socket_t* sock, std::vector<zmq::message_t>& outpu
 	
 	// recieve parts into tmp variable
 	zmq::message_t tmp;
-	while(sock->recv(&tmp)){
-		
+	//std::cout<<"Receiving part ";
+	bool err=false;
+	while(true){
+		//std::cout<<part<<"...";
+		int ok = sock->recv(&tmp);
+		if(ok<0){
+			err=true;
+			break;
+		}
 		// transfer the received message to the output vector
 		outputs.resize(outputs.size()+1);
 		outputs.back().move(&tmp);
 		
 		// receive next part if there is more to come
 		if(!outputs.back().more()) break;
-		
+		++part;
 	}
+	//std::cout<<std::endl;
 	
-	// if we broke the loop but last successfully received message had a more flag,
-	// we must have broken due to a failed receive
-	if(outputs.back().more()){
+	if(err){
 		// sock->recv failed
 		//Log("Error receving zmq message!",0);  // log at caller for better context
 		return false;

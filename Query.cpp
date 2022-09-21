@@ -6,6 +6,7 @@ Query::Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, zmq::messa
 	message_id.move(&msg_id_in);
 	database = std::string(reinterpret_cast<const char*>(database_in.data()));
 	query = std::string(reinterpret_cast<const char*>(query_in.data()));
+	//std::cout<<"building query for db: '"<<database<<"', query_string: '"<<query<<"'"<<std::endl;
 	query_ok=query_ok_in;
 	if(response_in!="NULL"){
 		response = std::vector<std::string>{response_in};
