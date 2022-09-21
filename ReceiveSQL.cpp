@@ -734,7 +734,10 @@ bool ReceiveSQL::GetClientReadQueries(){
 			Log("QUERY WAS: "+std::string(reinterpret_cast<const char*>(outputs.at(3).data())),10);
 			
 			// do a safety check to ensure this is actually a write query (optional)
-			std::string query(reinterpret_cast<const char*>(outputs.at(3).data()));
+			//std::string query = reinterpret_cast<const char*>(outputs.at(3).data());
+			std::string query(outputs.at(3).size(),'\0');
+			memcpy((void*)query.data(),outputs.at(3).data(),outputs.at(3).size());
+			query = query.substr(0,query.find('\0'));
 			
 			bool is_write_txn = (query.find("INSERT")!=std::string::npos) ||
 								(query.find("UPDATE")!=std::string::npos) ||
@@ -1018,10 +1021,11 @@ bool ReceiveSQL::RunNextReadQuery(){
 		std::string err;
 		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
 		Postgres* thedb=nullptr;
-		if(next_msg.database=="rundb")        thedb = &m_rundb;
-		if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
+		if(next_msg.database=="rundb")             thedb = &m_rundb;
+		else if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
+		//else { std::cerr<<"didn't match database name"<<std::endl; }
 		if(thedb==nullptr){
-			err="Middleman: Uknown database '"+next_msg.database +"'";
+			err="Middleman: Unknown database '"+next_msg.database +"'";
 			next_msg.query_ok=false;
 		} else {
 			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);

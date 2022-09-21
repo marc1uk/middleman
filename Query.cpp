@@ -4,8 +4,19 @@
 Query::Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, zmq::message_t& database_in, zmq::message_t& query_in, unsigned int query_ok_in, std::string response_in){
 	client_id.move(&client_id_in);
 	message_id.move(&msg_id_in);
-	database = std::string(reinterpret_cast<const char*>(database_in.data()));
-	query = std::string(reinterpret_cast<const char*>(query_in.data()));
+	
+	// NOPE reinterpret_cast and copy construction doesn't work
+	//database = reinterpret_cast<const char*>(database_in.data());
+	// XXX instead use memcpy and trim
+	database.resize(database_in.size(),'\0');
+	memcpy((void*)database.data(),database_in.data(),database_in.size());
+	database = database.substr(0,database.find('\0'));
+	
+	//query = reinterpret_cast<const char*>(query_in.data());
+	query.resize(query_in.size(),'\0');
+	memcpy((void*)query.data(),query_in.data(),query_in.size());
+	query = query.substr(0,query.find('\0'));
+	
 	//std::cout<<"building query for db: '"<<database<<"', query_string: '"<<query<<"'"<<std::endl;
 	query_ok=query_ok_in;
 	if(response_in!="NULL"){
