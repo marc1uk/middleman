@@ -416,7 +416,7 @@ std::cout<<"no incoming messages to read"<<std::endl;
 			
 			// first the sender id
 			// FIXME should this not be size+1 rather than length?
-			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			zmq::message_t host_id_zmq(clt_ID.length());
 			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// then a new message id
@@ -426,32 +426,34 @@ std::cout<<"no incoming messages to read"<<std::endl;
 			
 			// the name of the database
 			std::string dbname="monitoringdb";
-			zmq::message_t db_name_zmq(dbname.size()+1);
+			dbname += '\0';
+			zmq::message_t db_name_zmq(dbname.size());
 			snprintf((char*)db_name_zmq.data(), dbname.size()+1, "%s", dbname.c_str());
 			
 			// then the data  ( appending ::jsonb is optional )
 			std::string messagedata = "INSERT INTO resources ( time, source, status ) "
 			  "VALUES ( NOW(), '" + hostname + "', '" + resource_json + "'::jsonb )";
+			messagedata += '\0';
 			if(verbosity>3) std::cout<<"sending write query '"<<messagedata<<"'"<<std::endl;
 			
-			zmq::message_t message_data_zmq(messagedata.size()+1);
+			zmq::message_t message_data_zmq(messagedata.size());
 			//memcpy(message_data_zmq.data(), messagedata.data(), messagedata.size());
 			snprintf((char*)message_data_zmq.data(), messagedata.size()+1, "%s", messagedata.c_str());
 			
 			// send zmq message
-			if(not (clt_pub_socket->send(host_id_zmq, ZMQ_SNDMORE))){
+			if(not (clt_pub_socket->send(host_id_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending write query pt 0"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (clt_pub_socket->send(message_id_zmq, ZMQ_SNDMORE))){
+			} else if(not (clt_pub_socket->send(message_id_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending write query pt 1"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (clt_pub_socket->send(db_name_zmq, ZMQ_SNDMORE))){
+			} else if(not (clt_pub_socket->send(db_name_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending write query pt 2!"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (clt_pub_socket->send(message_data_zmq))){
+			} else if(not (clt_pub_socket->send(message_data_zmq)>0)){
 				std::cerr<<"Error sending write query pt 3!"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
@@ -459,7 +461,7 @@ std::cout<<"no incoming messages to read"<<std::endl;
 				// else sent ok
 				++write_queries_sent;
 				// add to our queue of messages waiting for responses
-				Message sent_msg(msg_id, messagedata, false);
+				Message sent_msg(msg_id, dbname, messagedata, false);
 				ack_queue.emplace(msg_id, sent_msg);
 				last_write = boost::posix_time::microsec_clock::universal_time();
 			}
@@ -485,7 +487,7 @@ std::cout<<"no listener on write port"<<std::endl;
 			// format zmq message
 			
 			// first the host id
-			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			zmq::message_t host_id_zmq(clt_ID.length());
 			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// then a new message id
@@ -495,13 +497,15 @@ std::cout<<"no listener on write port"<<std::endl;
 			
 			// then a database name
 			std::string dbname="monitoringdb";
-			zmq::message_t db_name_zmq(dbname.size()+1);
+			dbname += '\0';
+			zmq::message_t db_name_zmq(dbname.size());
 			snprintf((char*)db_name_zmq.data(), dbname.size()+1, "%s", dbname.c_str());
 			
 			// then the data
 			//std::string messagedata = "SELECT * FROM resources WHERE time >= NOW() - INTERVAL '5 minutes'";
 			std::string messagedata = "SELECT * FROM resources ORDER BY time LIMIT 3";
-			zmq::message_t message_data_zmq(messagedata.size()+1);
+			messagedata += '\0';
+			zmq::message_t message_data_zmq(messagedata.size());
 			//memcpy(message_data_zmq.data(), messagedata.data(), messagedata.size());
 			snprintf((char*)message_data_zmq.data(), messagedata.size()+1, "%s", messagedata.c_str());
 			
@@ -509,20 +513,20 @@ std::cout<<"no listener on write port"<<std::endl;
 			/* id is prepended automatically by receiving router.
 			// this only happens for read queries, write queries are received by a subcriber
 			// which does not do this
-			if(not (clt_dlr_socket->send(host_id_zmq, ZMQ_SNDMORE))){
+			if(not (clt_dlr_socket->send(host_id_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending read query pt 0"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
 			} else */
-			 if(not (clt_dlr_socket->send(message_id_zmq, ZMQ_SNDMORE))){
+			 if(not (clt_dlr_socket->send(message_id_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending read query pt 1"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-		 	} else if(not (clt_dlr_socket->send(db_name_zmq, ZMQ_SNDMORE))){
+		 	} else if(not (clt_dlr_socket->send(db_name_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending read query pt 2"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (clt_dlr_socket->send(message_data_zmq))){
+			} else if(not (clt_dlr_socket->send(message_data_zmq)>0)){
 				std::cerr<<"Error sending read query pt 3!"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
@@ -530,7 +534,7 @@ std::cout<<"no listener on write port"<<std::endl;
 				// else sent ok
 				++read_queries_sent;
 				// add to our queue of messages waiting for responses
-				Message sent_msg(msg_id, messagedata, true);
+				Message sent_msg(msg_id, dbname, messagedata, true);
 				ack_queue.emplace(msg_id, sent_msg);
 				last_read = boost::posix_time::microsec_clock::universal_time();
 			}
@@ -562,16 +566,23 @@ std::cout<<"no listener on read port"<<std::endl;
 			// format zmq message
 			
 			// hostname
-			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			zmq::message_t host_id_zmq(clt_ID.length());
 			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// use same message id
 			zmq::message_t message_id_zmq(sizeof(next_msg_id));
 			memcpy(message_id_zmq.data(), &next_msg_id, sizeof(next_msg_id));
 			
+			// database name
+			std::string dbname = next_msg.dbname;
+			//dbname += '\0';   << messages in ack queue already have this done
+			zmq::message_t db_name_zmq(dbname.length());
+			snprintf((char*)db_name_zmq.data(), dbname.length()+1, "%s", dbname.c_str());
+			
 			// then the data
 			std::string messagedata = next_msg.query;
-			zmq::message_t message_data_zmq(messagedata.size()+1);
+			//messagedata += '\0';   << messages in ack queue already have this done
+			zmq::message_t message_data_zmq(messagedata.size());
 			//memcpy(message_data_zmq.data(), messagedata.data(), messagedata.size());
 			snprintf((char*)message_data_zmq.data(), messagedata.size()+1, "%s", messagedata.c_str());
 			
@@ -586,12 +597,14 @@ std::cout<<"no listener on read port"<<std::endl;
 				zmq::socket_t* sock = (read_qry) ? clt_dlr_socket : clt_pub_socket;
 				
 				// send zmq message
-				if(!read_qry && not (sock->send(host_id_zmq, ZMQ_SNDMORE))){
+				if(!read_qry && not (sock->send(host_id_zmq, ZMQ_SNDMORE)>0)){
 					std::cerr<<"Error resending "<<((read_qry) ? "read" : "write")<<" query pt 0!"<<std::endl;
-				} else if(not (sock->send(message_id_zmq, ZMQ_SNDMORE))){
+				} else if(not (sock->send(message_id_zmq, ZMQ_SNDMORE)>0)){
 					std::cerr<<"Error resending "<<((read_qry) ? "read" : "write")<<" query pt 1!"<<std::endl;
-				} else if(not (sock->send(message_data_zmq))){
+				} else if(not (sock->send(db_name_zmq, ZMQ_SNDMORE)>0)){
 					std::cerr<<"Error resending "<<((read_qry) ? "read" : "write")<<" query pt 2!"<<std::endl;
+				} else if(not (sock->send(message_data_zmq)>0)){
+					std::cerr<<"Error resending "<<((read_qry) ? "read" : "write")<<" query pt 3!"<<std::endl;
 				} else {
 					// sent ok. increment the retry count and update the last send time.
 					++next_msg.retries;
@@ -781,7 +794,7 @@ std::cout<<"got a log listener"<<std::endl;
 			// 4. the message to log
 			
 			// first the host id
-			zmq::message_t host_id_zmq(clt_ID.length()+1);
+			zmq::message_t host_id_zmq(clt_ID.length());
 			snprintf((char*)host_id_zmq.data(), clt_ID.length()+1, "%s", clt_ID.c_str());
 			
 			// then a timestamp
@@ -790,7 +803,8 @@ std::cout<<"got a log listener"<<std::endl;
 			time_t rawtime = time(NULL);
 			struct tm* timeinfo = localtime(&rawtime);
 			strftime(const_cast<char*>(timestamp.c_str()),20,"%F %T",timeinfo);
-			zmq::message_t message_timestamp_zmq(timestamp.size()+1);
+			timestamp += '\0';
+			zmq::message_t message_timestamp_zmq(timestamp.size());
 			snprintf((char*)message_timestamp_zmq.data(), timestamp.size()+1, "%s", timestamp.c_str());
 			
 			// then the severity
@@ -798,25 +812,26 @@ std::cout<<"got a log listener"<<std::endl;
 			memcpy(message_severity_zmq.data(), &severity, sizeof(severity));
 			
 			// then the log message
-			zmq::message_t message_data_zmq(logmessage.size()+1);
+			logmessage += '\0';
+			zmq::message_t message_data_zmq(logmessage.size());
 			snprintf((char*)message_data_zmq.data(), logmessage.size()+1, "%s", logmessage.c_str());
 			
 			// send zmq message
 std::cout<<"Sending logmessage '"<<logmessage<<"'"<<std::endl;
 			all_ok = false;
-			if(not (log_pub_socket->send(host_id_zmq, ZMQ_SNDMORE))){
+			if(not (log_pub_socket->send(host_id_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending log message pt 0"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (log_pub_socket->send(message_timestamp_zmq, ZMQ_SNDMORE))){
+			} else if(not (log_pub_socket->send(message_timestamp_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending log message pt 1"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (log_pub_socket->send(message_severity_zmq, ZMQ_SNDMORE))){
+			} else if(not (log_pub_socket->send(message_severity_zmq, ZMQ_SNDMORE)>0)){
 				std::cerr<<"Error sending log message pt 2"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");
-			} else if(not (log_pub_socket->send(message_data_zmq))){
+			} else if(not (log_pub_socket->send(message_data_zmq)>0)){
 				std::cerr<<"Error sending log message pt 3"<<std::endl;
 				printf("Error was: %s\n",errnoname(errno));
 				perror("which maps to: ");

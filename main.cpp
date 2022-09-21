@@ -1,6 +1,8 @@
 #include "DemoClient.h"
 #include <iostream>
 #include "unistd.h"
+#include <thread>
+#include <chrono>
 
 int main(int argc, const char* argv[]){
 	
@@ -17,6 +19,11 @@ int main(int argc, const char* argv[]){
 	if(not get_ok){
 		std::cerr<<"Failed to initialize!"<<std::endl;
 		return -1;
+	}
+	if(argc>2){
+		int nsecs = atoi(argv[2]);
+		std::cout<<"sleeping for "<<nsecs<<"s to allow service discovery to find us"<<std::endl;
+		std::this_thread::sleep_for(std::chrono::seconds(nsecs));
 	}
 	Store configs;
 	configs.Initialise(configfile);
