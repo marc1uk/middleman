@@ -8,6 +8,7 @@
 struct Query{
 	Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, zmq::message_t& database_in, zmq::message_t& query_in, unsigned int query_ok_in=0, std::string response_in="NULL");
 	Query(const Query& in);
+	void Print();
 	
 	zmq::message_t client_id;
 	zmq::message_t message_id;

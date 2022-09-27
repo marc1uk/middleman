@@ -77,23 +77,34 @@ class ReceiveSQL{
 	Postgres m_rundb;
 	Postgres m_monitoringdb;
 	
-	ServiceDiscovery* service_discovery = nullptr;
-	Utilities* utilities = nullptr;
-	// required by the Utilities class to keep track of connections to clients
-	std::map<std::string,Store*> connections;
 	
 	int stdio_verbosity;
 	int db_verbosity;
 	
 	zmq::context_t* context=nullptr;
 	
-	zmq::socket_t* clt_sub_socket=nullptr;
-	zmq::socket_t* clt_dlr_socket=nullptr;
-	zmq::socket_t* clt_rtr_socket=nullptr;
-	zmq::socket_t* mm_rcv_socket=nullptr;
-	zmq::socket_t* mm_snd_socket=nullptr;
-	zmq::socket_t* log_sub_socket=nullptr;
-	zmq::socket_t* log_pub_socket=nullptr;
+	// these receive connections from others;
+	// ServiceDiscovery will invoke 'connect' for us
+	zmq::socket_t* clt_rtr_socket=nullptr;  // receives read queries from client dealers
+	zmq::socket_t* clt_sub_socket=nullptr;  // receives write queries from client publishers
+	zmq::socket_t* mm_rcv_socket=nullptr;   // receives connections from other middlemen
+	zmq::socket_t* log_sub_socket=nullptr;  // receives log messages from client publishers
+	
+	// these sockets will bind, they advertise our services
+	zmq::socket_t* mm_snd_socket=nullptr;   // we will advertise our presence as a middleman to other middlemen
+	zmq::socket_t* log_pub_socket=nullptr;  // we will advertise our presence as a source of logging
+	
+	// Service Discovery finds clients that are interested in our services
+	// and connect us to those sockets
+	ServiceDiscovery* service_discovery = nullptr;
+	Utilities* utilities = nullptr;
+	// required by the Utilities class to keep track of connections to clients
+	// we should have one map per zmq_socket managed by the Utilities class;
+	// it uses this to determine if we are connected to a given client already
+	std::map<std::string,Store*> clt_rtr_connections;
+	std::map<std::string,Store*> mm_rcv_connections;
+	std::map<std::string,Store*> clt_sub_connections;
+	std::map<std::string,Store*> log_sub_connections;
 	
 	// poll timeouts
 	int inpoll_timeout;

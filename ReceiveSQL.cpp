@@ -141,7 +141,10 @@ bool ReceiveSQL::Finalise(){
 	if(service_discovery){ delete service_discovery; service_discovery=nullptr; }
 	
 	Log("Clearing known connections",3);
-	connections.clear();
+	clt_rtr_connections.clear();
+	mm_rcv_connections.clear();
+	clt_sub_connections.clear();
+	log_sub_connections.clear();
 	
 	// delete sockets
 	Log("Deleting sockets",3);
@@ -473,13 +476,13 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	utilities = new Utilities(context);
 	
 	// this lets us connect our listener socket to all clients advertising a given service with:
-	utilities->UpdateConnections("psql_read", clt_rtr_socket, connections);
-	utilities->UpdateConnections("psql_rep",  clt_rtr_socket, connections);
-	utilities->UpdateConnections("middleman", mm_rcv_socket, connections);
+	utilities->UpdateConnections("psql_read", clt_rtr_socket, clt_rtr_connections);
+	utilities->UpdateConnections("psql_rep",  clt_rtr_socket, clt_rtr_connections);
+	utilities->UpdateConnections("middleman", mm_rcv_socket, mm_rcv_connections);
 	// additional listening for master on write query and logging ports
 	if(am_master){
-		utilities->UpdateConnections("psql_write", clt_sub_socket, connections);
-		utilities->UpdateConnections("logging", log_sub_socket, connections);
+		utilities->UpdateConnections("psql_write", clt_sub_socket, clt_sub_connections);
+		utilities->UpdateConnections("logging", log_sub_socket, log_sub_connections);
 	}
 	// we'll call this each Execute loop to connect to any newly found clients.
 	
@@ -577,25 +580,35 @@ bool ReceiveSQL::InitMessaging(Store& m_variables){
 
 bool ReceiveSQL::FindNewClients(){
 	
-	int old_conns=connections.size();
+	int new_connections=0;
+	int old_connections=0;
 	
 	// update any connections
-	utilities->UpdateConnections("psql_read", clt_rtr_socket, connections);
-	utilities->UpdateConnections("psql_rep",  clt_rtr_socket, connections);
-	utilities->UpdateConnections("mm_rcv", mm_rcv_socket, connections);
+	old_connections=clt_rtr_connections.size();
+	utilities->UpdateConnections("psql_read", clt_rtr_socket, clt_rtr_connections);
+	utilities->UpdateConnections("psql_rep",  clt_rtr_socket, clt_rtr_connections);
+	new_connections+=clt_rtr_connections.size()-old_connections;
+	old_connections=mm_rcv_connections.size();
+	utilities->UpdateConnections("mm_rcv", mm_rcv_socket, mm_rcv_connections);
+	new_connections+=mm_rcv_connections.size()-old_connections;
 	
 	// additional listening for master on write query and logging ports
 	if(am_master){
-		utilities->UpdateConnections("psql_write", clt_sub_socket, connections);
-		utilities->UpdateConnections("logging", log_sub_socket, connections);
+		old_connections=clt_sub_connections.size();
+		utilities->UpdateConnections("psql_write", clt_sub_socket, clt_sub_connections);
+		new_connections+=clt_sub_connections.size()-old_connections;
+		old_connections=log_sub_connections.size();
+		utilities->UpdateConnections("logging", log_sub_socket, log_sub_connections);
+		new_connections+=log_sub_connections.size()-old_connections;
 	}
 	
-	if(old_conns!=connections.size()){
-		Log("Made "+std::to_string(connections.size()-old_conns)+" new connections!",3);
+	if(new_connections>0){
+		Log("Made "+std::to_string(new_connections)+" new connections!",3);
 	} else {
 		Log("No new clients found",5);
 	}
-	/*
+	
+	/* needs fixing to uncomment
 	std::cout<<"We have: "<<connections.size()<<" connected clients"<<std::endl;
 	std::cout<<"Connections are: "<<std::endl;
 	for(auto&& athing : connections){
@@ -661,10 +674,36 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		Log("RECEIVED WRITE QUERY FROM CLIENT '"+client_str+"' with msg id "+std::to_string(msg_int),3);
 		
 		if(cache.count(key)){
+			std::cout<<"skipping write as we've done it already"<<std::endl;
+			/*
+			if(memcmp(outputs.at(0).data(),cache.at(key).client_id.data(),outputs.at(0).size())!=0){
+				std::cout<<"client id messages are different"<<std::endl;
+				std::cout<<"old message had length "<<cache.at(key).client_id.size()
+				         <<"new message had length "<<outputs.at(0).size()<<std::endl;
+				size_t newsize = outputs.at(0).size();
+				unsigned char* newid = new unsigned char[newsize];
+				memcpy(newid,outputs.at(0).data(),newsize);
+				std::cout<<"new id is '";
+				for(int i=0; i<newsize; ++i){
+					printf("%02x",newid[i]);
+				}
+				std::cout<<"', old id is '";
+				size_t oldsize = cache.at(key).client_id.size();
+				unsigned char* oldid = new unsigned char[newsize];
+				memcpy(oldid,cache.at(key).client_id.data(),newsize);
+				for(int i=0; i<newsize; ++i){
+					printf("%02x",oldid[i]);
+				}
+				std::cout<<"'"<<std::endl;
+			}
+			// override old client id with new cliend id
+			memcpy(cache.at(key).client_id.data(),outputs.at(0).data(),outputs.at(0).size());
+			*/
+			
 			Log("We know this query...",10);
 			// we've already run and sent the response to this query, resend it.
 			resp_queue.emplace(key,cache.at(key));
-			resp_queue.erase(key);
+			cache.erase(key);
 		
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("New query, adding to write queue",10);
@@ -726,8 +765,11 @@ bool ReceiveSQL::GetClientReadQueries(){
 		// check if we already know this query.
 		if(cache.count(key)){
 			// we've already run and sent the response to this query, resend it.
+			std::cout<<"we know this query: re-sending cached reply of:"<<std::endl;
+			//cache.at(key).Print();
+			
 			resp_queue.emplace(key,cache.at(key));
-			resp_queue.erase(key);
+			cache.erase(key);
 			
 		} else if(rd_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("RECEIVED READ QUERY FROM CLIENT '"+client_str+"' with message id: "+std::to_string(msg_int),3);
@@ -1109,6 +1151,11 @@ bool ReceiveSQL::SendNextReply(){
 			int* msgID = reinterpret_cast<int*>(next_msg.message_id.data());
 			Log("Sending next reply to ZMQ IDENTITY '"+client_str+"' for msg "+std::to_string(*msgID),1);
 			
+			// as soon as we send a zmq::message_t (i.e. client_id and message_id), they are "used up":
+			// the 'message.size()' becomes 0 and they strictly no longer retain their contents.
+			// to keep a copy cached for re-sending we need to explicitly make a copy now.
+			Query qrycpy(next_msg);  // (the Query copy-constructor invokes zmq::message_t->copy on members)
+			
 			if(next_msg.response.size()==0){
 				try{
 					get_ok = Send(clt_rtr_socket,
@@ -1136,13 +1183,12 @@ bool ReceiveSQL::SendNextReply(){
 			
 			if(get_ok){
 				// all parts sent successfully, add to the sent cache
-				cache.emplace(resp_queue.begin()->first,resp_queue.begin()->second);
+				cache.emplace(resp_queue.begin()->first,qrycpy);
 				// remove from the to-send queue
 				resp_queue.erase(resp_queue.begin()->first);
 				++acks_sent;
 				
 			} else {
-std::cerr<<"ERROR SENDING RESPONSE"<<std::endl;
 				Log("Error sending acknowledgement message!",1);
 				if(next_msg.retries>=max_send_attempts){
 					// give up

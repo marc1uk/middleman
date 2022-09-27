@@ -37,3 +37,17 @@ Query::Query(const Query& in){
 	retries = in.retries;
 	recpt_time = in.recpt_time;
 }
+
+void Query::Print(){
+	std::string client(client_id.size(),'\0');
+	memcpy((void*)client.c_str(),client_id.data(),client_id.size());
+	int msgid;
+	memcpy(&msgid,message_id.data(),sizeof(msgid));
+	std::cout<<"query "<<msgid<<" from client "<<client<<": '"
+	         <<query<<"', response '";
+	for(std::string& apart : response) std::cout<<"["<<apart<<"]";
+	std::cout<<"', sent "<<retries<<" times";
+	if(retries==0) std::cout<<". message received at ";
+	else           std::cout<<" last send attempt at ";
+	std::cout<<to_simple_string(recpt_time)<<std::endl;
+}
