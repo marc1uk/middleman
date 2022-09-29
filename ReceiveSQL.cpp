@@ -1037,7 +1037,7 @@ bool ReceiveSQL::RunNextWriteQuery(){
 			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
 		}
 		if(not next_msg.query_ok){
-			Log(Concat("Write query failed! Query was: '",next_msg.query,"', error was: '",err,"'"),1);
+			Log(Concat("Write query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),1);
 			++write_queries_failed;
 			next_msg.response = std::vector<std::string>{err};
 		}
@@ -1073,7 +1073,7 @@ bool ReceiveSQL::RunNextReadQuery(){
 			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
 		}
 		if(not next_msg.query_ok){
-			Log(Concat("Read query failed! Query was: '",next_msg.query,"', error was: '",err,"'"),1);
+			Log(Concat("Read query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),1);
 			++read_queries_failed;
 			next_msg.response = std::vector<std::string>{err};
 		}

@@ -16,11 +16,11 @@ BoostInclude= -I $(ToolDAQPath)/boost_1_66_0/install/include
 
 CXXFLAGS= -g -std=c++11 -fdiagnostics-color=always -Wno-attributes -O3
 
-all: main
+all: middleman
 
 .phony: clean
 
-main: main.cpp $(filter-out main.o, $(patsubst %.cpp, %.o, $(wildcard *.cpp)))
+middleman: main.cpp $(filter-out main.o, $(patsubst %.cpp, %.o, $(wildcard *.cpp)))
 	g++ $(CXXFLAGS) $^ -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) -lpthread
 
 %.o: %.cpp %.h
