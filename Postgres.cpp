@@ -239,6 +239,7 @@ bool Postgres::QueryAsJsons(std::string query, std::vector<std::string> *results
 	// generically run a query, without knowing how many returns are expected.
 	// we'll need to get the results in a generic pqxx::result, and specify the number
 	// of returned rows is >1. If there's fewer, it'll just return an empty container.
+	//printf("QueryAsJsons running '%s'\n",query.c_str());
 	pqxx::result res;
 	get_ok = Query(query, 2, &res, nullptr, err);
 	// if the query failed, the user didn't provide means for a return, or the query had no return,

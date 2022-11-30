@@ -641,29 +641,40 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		}
 		
 		// received message format should be a 4-part message
-		if(outputs.size()!=4){
-			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
-			std::string client_str="-"; unsigned int msg_int=-1; std::string dbname="-";
-			if(outputs.size()>0) client_str = reinterpret_cast<char*>(outputs.at(0).data());
-			if(outputs.size()>1) msg_int = *reinterpret_cast<int*>(outputs.at(1).data());
-			if(outputs.size()>2) dbname = reinterpret_cast<char*>(outputs.at(2).data());
-			std::cout<<"client: '"<<client_str<<"', msg_id: "<<msg_int<<", db: '"<<dbname<<"'"<<std::endl;
-
-			++write_query_recv_fails;
-			return false;
-		}
-		
 		// expected parts are:
 		// 1. ZMQ_IDENTITY of the sender client
 		// 2. a unique ID used by the sender to match acknowledgements to sent messages
 		// 3. a database name 
 		// 4. an SQL statement
+		
+		std::string client_str="-"; uint32_t msg_int=-1; std::string dbname="-";
+		std::string qry_string="-";
+		if(outputs.size()>0){
+			client_str.resize(outputs.at(0).size(),'\0');
+			memcpy((void*)client_str.data(),outputs.at(0).data(),outputs.at(0).size());
+		}
+		if(outputs.size()>1) msg_int = *reinterpret_cast<uint32_t*>(outputs.at(1).data());
+		if(outputs.size()>2){
+			dbname.resize(outputs.at(2).size(),'\0');
+			memcpy((void*)dbname.data(),outputs.at(2).data(),outputs.at(2).size());
+		}
+		//if(outputs.size()>3){
+		//	qry_string.resize(outputs.at(3).size(),'\0');
+		//	memcpy((void*)qry_string.data(),outputs.at(3).data(),outputs.at(3).size());
+		//}
+		
+		if(outputs.size()!=4){
+			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
+			Log(Concat("client: '",client_str,"', msg_id: ",msg_int,", db: '",dbname,"'"),4);
+			
+			++write_query_recv_fails;
+			return false;
+		}
+		
 		// to track messages already handled, we form a key from the client ID and message ID,
 		// and will use this to track message processing
 		
-		std::string client_str(reinterpret_cast<char*>(outputs.at(0).data()));
-		unsigned int msg_int = *reinterpret_cast<int*>(outputs.at(1).data());
-		std::pair<std::string, unsigned int> key{client_str,msg_int};
+		std::pair<std::string, uint32_t> key{client_str,msg_int};
 		
 		// check if we've received this query before
 		// 1. we may have this query queued, but haven't run it yet - ignore
@@ -671,7 +682,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		// 3. we may have run the query and sent the response, but it got lost in the mail -
 		//    re-add the response to the to-send queue.
 		// otherwise add to our query queue.
-		Log("RECEIVED WRITE QUERY FROM CLIENT '"+client_str+"' with msg id "+std::to_string(msg_int),3);
+		Log(Concat("RECEIVED WRITE QUERY FROM CLIENT '",client_str,"' with msg id ",msg_int),3);
 		
 		if(cache.count(key)){
 			std::cout<<"skipping write as we've done it already"<<std::endl;
@@ -707,10 +718,10 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("New query, adding to write queue",10);
-			Log("QUERY WAS: '"+std::string(reinterpret_cast<char*>(outputs.at(3).data()))+"'",20);
 			// we don't have it waiting either in to-run or to-respond queues.
 			// construct a Query object to encapsulate the query
 			Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
+			Log(Concat("QUERY WAS: '",msg.query,"'"),20);
 			wrt_txn_queue.emplace(key, msg);
 			
 		} // else we've already got it queued, ignore it.
@@ -758,9 +769,31 @@ bool ReceiveSQL::GetClientReadQueries(){
 		// 4. SQL statement
 		// again the first two parts form a key used to track messages already handled.
 		
-		std::string client_str(reinterpret_cast<const char*>(outputs.at(0).data()));
-		unsigned int msg_int = *reinterpret_cast<int*>(outputs.at(1).data());
-		std::pair<std::string, unsigned int> key{client_str,msg_int};
+		std::string client_str="-"; uint32_t msg_int=-1; std::string dbname="-";
+		std::string qry_string="-";
+		if(outputs.size()>0){
+			client_str.resize(outputs.at(0).size(),'\0');
+			memcpy((void*)client_str.data(),outputs.at(0).data(),outputs.at(0).size());
+		}
+		if(outputs.size()>1) msg_int = *reinterpret_cast<uint32_t*>(outputs.at(1).data());
+		if(outputs.size()>2){
+			dbname.resize(outputs.at(2).size(),'\0');
+			memcpy((void*)dbname.data(),outputs.at(2).data(),outputs.at(2).size());
+		}
+		if(outputs.size()>3){
+			qry_string.resize(outputs.at(3).size(),'\0');
+			memcpy((void*)qry_string.data(),outputs.at(3).data(),outputs.at(3).size());
+		}
+		
+		if(outputs.size()!=4){
+			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
+			Log(Concat("client: '",client_str,"', msg_id: ",msg_int,", db: '",dbname,"'"),4);
+			
+			++write_query_recv_fails;
+			return false;
+		}
+		
+		std::pair<std::string, uint32_t> key{client_str,msg_int};
 		
 		// check if we already know this query.
 		if(cache.count(key)){
@@ -773,18 +806,14 @@ bool ReceiveSQL::GetClientReadQueries(){
 			
 		} else if(rd_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("RECEIVED READ QUERY FROM CLIENT '"+client_str+"' with message id: "+std::to_string(msg_int),3);
-			Log("QUERY WAS: "+std::string(reinterpret_cast<const char*>(outputs.at(3).data())),10);
 			
 			// do a safety check to ensure this is actually a write query (optional)
 			//std::string query = reinterpret_cast<const char*>(outputs.at(3).data());
-			std::string query(outputs.at(3).size(),'\0');
-			memcpy((void*)query.data(),outputs.at(3).data(),outputs.at(3).size());
-			query = query.substr(0,query.find('\0'));
 			
-			bool is_write_txn = (query.find("INSERT")!=std::string::npos) ||
-								(query.find("UPDATE")!=std::string::npos) ||
-								(query.find("DELETE")!=std::string::npos) ||
-								(query.find("INTO")!=std::string::npos);
+			bool is_write_txn = (qry_string.find("INSERT")!=std::string::npos) ||
+								(qry_string.find("UPDATE")!=std::string::npos) ||
+								(qry_string.find("DELETE")!=std::string::npos) ||
+								(qry_string.find("INTO")!=std::string::npos);
 			
 			if(not is_write_txn || (am_master && handle_unexpected_writes)){
 				// sanity check passed
@@ -845,11 +874,21 @@ bool ReceiveSQL::GetClientLogMessages(){
 		// 3. a severity
 		// 4. the log message
 		// we do not send acks for log messages, so do not need to track them (no repeat sends)
-		
-		std::string client_str(reinterpret_cast<const char*>(outputs.at(0).data()));
-		std::string timestamp(reinterpret_cast<const char*>(outputs.at(1).data()));
-		unsigned int severity = *reinterpret_cast<int*>(outputs.at(2).data());
-		std::string log_str(reinterpret_cast<const char*>(outputs.at(3).data()));
+		std::string client_str="-"; std::string timestamp="-"; std::string log_str="-";
+		uint32_t severity;
+		if(outputs.size()>0){
+			client_str.resize(outputs.at(0).size(),'\0');
+			memcpy((void*)client_str.data(),outputs.at(0).data(),outputs.at(0).size());
+		}
+		if(outputs.size()>1){
+			timestamp.resize(outputs.at(2).size(),'\0');
+			memcpy((void*)timestamp.data(),outputs.at(2).data(),outputs.at(2).size());
+		}
+		if(outputs.size()>2) severity = *reinterpret_cast<uint32_t*>(outputs.at(2).data());
+		if(outputs.size()>3){
+			log_str.resize(outputs.at(3).size(),'\0');
+			memcpy((void*)log_str.data(),outputs.at(3).data(),outputs.at(3).size());
+		}
 		
 		in_log_queue.emplace_back(client_str, timestamp, severity, log_str);
 		Log("Put client logmessage in queue: '"+log_str+"'",5);
@@ -899,7 +938,7 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 			// got a broadcast message format.
 			// the received message should be an integer indicating whether the other
 			// middleman is in the master role. If there's a clash, we'll need to negotiate.
-			unsigned int is_master = *(reinterpret_cast<unsigned int*>(outputs.at(0).data()));
+			uint32_t is_master = *(reinterpret_cast<uint32_t*>(outputs.at(0).data()));
 			
 			if(is_master && am_master){
 				Log("Both middleman are masters! ...",3);
@@ -1273,7 +1312,7 @@ bool ReceiveSQL::BroadcastPresence(){
 		if(out_polls.at(2).revents & ZMQ_POLLOUT){
 			
 			++mm_broadcasts_sent;
-			unsigned int msg = am_master;
+			uint32_t msg = am_master;
 			get_ok = Send(mm_snd_socket, false, msg);
 			
 			if(get_ok){
@@ -1297,7 +1336,7 @@ bool ReceiveSQL::BroadcastPresence(){
 bool ReceiveSQL::CleanupCache(){
 	
 	// cleanup any old messages from the cache
-	for(std::pair<const std::pair<std::string, unsigned int>, Query>& msg : cache){
+	for(std::pair<const std::pair<std::string, uint32_t>, Query>& msg : cache){
 		
 		elapsed_time =
 			cache_period - (msg.second.recpt_time - boost::posix_time::microsec_clock::universal_time());
@@ -1316,7 +1355,7 @@ bool ReceiveSQL::CleanupCache(){
 bool ReceiveSQL::TrimQueue(std::string queuename){
 	
 	// check acknowledge queue size and do the same
-	std::map<std::pair<std::string, unsigned int>, Query>* queue;
+	std::map<std::pair<std::string, uint32_t>, Query>* queue;
 	unsigned long* drop_count;
 	
 	// check which queue we're managing
@@ -1406,7 +1445,7 @@ bool ReceiveSQL::TrimCache(){
 		
 		// drop the oldest X messages. To do this we need to sort the cache by receipt time.
 		std::map<boost::posix_time::ptime,
-		         std::map<std::pair<std::string, unsigned int>, Query>::iterator> sorted_cache;
+		         std::map<std::pair<std::string, uint32_t>, Query>::iterator> sorted_cache;
 		
 		// fill the sorted map
 		for(auto it = cache.begin(); it!=cache.end(); ++it){
@@ -1598,7 +1637,7 @@ bool ReceiveSQL::NegotiationRequest(){
 			
 			// 1 part message is probably got a normal broadcast message. process it.
 			if(messages.size()==1){
-				unsigned int is_master = *(reinterpret_cast<unsigned int*>(messages.front().data()));
+				uint32_t is_master = *(reinterpret_cast<uint32_t*>(messages.front().data()));
 				if((is_master && am_master) || (!is_master && !am_master)){
 					// we need to negotiate - we're aready doing it!
 				} else {
@@ -1967,8 +2006,8 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, zmq::message_t& message){
 bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
 	// form the zmq::message_t
 	zmq::message_t message(messagedata.size());
-	//memcpy(message.data(), messagedata.data(), messagedata.size());
-	snprintf((char*)message.data(), messagedata.size()+1, "%s", messagedata.c_str());
+	memcpy(message.data(), messagedata.data(), messagedata.size());
+	//snprintf((char*)message.data(), messagedata.size()+1, "%s", messagedata.c_str());
 	
 	// send it with given SNDMORE flag
 	bool send_ok;
@@ -1989,7 +2028,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> m
 		// form zmq::message_t
 		zmq::message_t message(messages.at(i).size());
 		memcpy(message.data(), messages.at(i).data(), messages.at(i).size());
-		snprintf((char*)message.data(), messages.at(i).size()+1, "%s", messages.at(i).c_str());
+		//snprintf((char*)message.data(), messages.at(i).size()+1, "%s", messages.at(i).c_str());
 		
 		// send this part
 		bool send_ok = sock->send(message, ZMQ_SNDMORE);
@@ -2000,8 +2039,8 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> m
 	
 	// form the zmq::message_t for the last part
 	zmq::message_t message(messages.back().size());
-	//memcpy(message.data(), messages.back().data(), messages.back().size());
-	snprintf((char*)message.data(), messages.back().size()+1, "%s", messages.back().c_str());
+	memcpy(message.data(), messages.back().data(), messages.back().size());
+	//snprintf((char*)message.data(), messages.back().size()+1, "%s", messages.back().c_str());
 	
 	// send it with, or without SNDMORE flag as requested
 	bool send_ok;
@@ -2077,7 +2116,7 @@ bool ReceiveSQL::Receive(zmq::socket_t* sock, std::vector<zmq::message_t>& outpu
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Log(std::string message, int message_severity){
+bool ReceiveSQL::Log(std::string message, uint32_t message_severity){
 	
 	// log locally, if within printout verbosity
 	if(message_severity < stdio_verbosity){

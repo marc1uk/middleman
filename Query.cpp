@@ -1,7 +1,7 @@
 #include "Query.h"
 
 // constructor from elements, given a direct SQL query string
-Query::Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, zmq::message_t& database_in, zmq::message_t& query_in, unsigned int query_ok_in, std::string response_in){
+Query::Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, zmq::message_t& database_in, zmq::message_t& query_in, uint32_t query_ok_in, std::string response_in){
 	client_id.move(&client_id_in);
 	message_id.move(&msg_id_in);
 	
@@ -41,7 +41,7 @@ Query::Query(const Query& in){
 void Query::Print(){
 	std::string client(client_id.size(),'\0');
 	memcpy((void*)client.c_str(),client_id.data(),client_id.size());
-	int msgid;
+	uint32_t msgid;
 	memcpy(&msgid,message_id.data(),sizeof(msgid));
 	std::cout<<"query "<<msgid<<" from client "<<client<<": '"
 	         <<query<<"', response '";

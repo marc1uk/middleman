@@ -1,7 +1,7 @@
 #include "LogMsg.h"
 
 // constructor from elements
-LogMsg::LogMsg(std::string client_id_in, std::string timestamp_in, unsigned int severity_in, std::string message_in){
+LogMsg::LogMsg(std::string client_id_in, std::string timestamp_in, uint32_t severity_in, std::string message_in){
 	client_id = client_id_in;
 	severity = severity_in;
 	message = message_in;

@@ -65,7 +65,7 @@ class ReceiveSQL{
 	bool GetLastUpdateTime(std::string& our_timestamp);
 	
 	// Logging functions
-	bool Log(std::string message, int message_severity);
+	bool Log(std::string message, uint32_t message_severity);
 	bool LogToDb(LogMsg logmsg);
 	
 	// generic receive functions
@@ -153,16 +153,16 @@ class ReceiveSQL{
 	// 1. a queue of sql queries we're to enact
 	// 2. a queue of responses to send to clients
 	// 3. a queue of logging messages to send to the master monitoring db
-	std::map<std::pair<std::string, unsigned int>, Query> wrt_txn_queue;
-	std::map<std::pair<std::string, unsigned int>, Query> rd_txn_queue;
-	std::map<std::pair<std::string, unsigned int>, Query> resp_queue;
+	std::map<std::pair<std::string, uint32_t>, Query> wrt_txn_queue;
+	std::map<std::pair<std::string, uint32_t>, Query> rd_txn_queue;
+	std::map<std::pair<std::string, uint32_t>, Query> resp_queue;
 	std::deque<LogMsg> in_log_queue;
 	std::deque<LogMsg> out_log_queue;
 	// we'll cache a set of recent responses send to each client,
 	// then if a client that misses their acknowledgement and resends the query,
 	// we can resend the response without re-running the query.
 	// this is mostly important to prevent repeated runs of 'insert' queries
-	std::map<std::pair<std::string, unsigned int>, Query> cache;
+	std::map<std::pair<std::string, uint32_t>, Query> cache;
 	
 	// Negotiation variables
 	// #####################
