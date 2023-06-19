@@ -36,7 +36,11 @@ int main(int argc, const char* argv[]){
 	std::cout<<"Beginning loop"<<std::endl;
 	while(true){
 		//std::cout<<">>>>>> loop <<<<<<<<"<<std::endl;
-		receiver.Execute();
+		try{
+			receiver.Execute();
+		} catch(std::exception& e){
+			std::cerr<<"CAUGHT EXCEPTION: "<<e.what()<<" for ReceiveSQL::Execute call in middleman!"<<std::endl;
+		}
 		
 		//std::cout<<"checking for stopfile"<<std::endl;
 		std::ifstream stopfile(stop_file);
