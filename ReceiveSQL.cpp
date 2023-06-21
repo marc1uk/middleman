@@ -3,6 +3,7 @@
 #include <exception>
 #include <stdio.h>
 #include <cstring>
+#include <locale>    // toupper
 
 // TODO: invoking pg_promote requires either superuser privileges, or explicit granting
 // of EXECUTE on the function pg_promote. We should grant this to the middleman,
@@ -121,7 +122,7 @@ bool ReceiveSQL::Execute(){
 	
 	// Monitoring and Logging
 	Log("Tracking Stats",4);
-	get_ok = TrackStats();
+	if(!stats_period.is_negative()) get_ok = TrackStats();
 	
 	Log("Loop Iteration Done",5);
 }
@@ -477,7 +478,6 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	
 	// this lets us connect our listener socket to all clients advertising a given service with:
 	utilities->UpdateConnections("psql_read", clt_rtr_socket, clt_rtr_connections);
-	utilities->UpdateConnections("psql_rep",  clt_rtr_socket, clt_rtr_connections);
 	utilities->UpdateConnections("middleman", mm_rcv_socket, mm_rcv_connections);
 	// additional listening for master on write query and logging ports
 	if(am_master){
@@ -586,7 +586,6 @@ bool ReceiveSQL::FindNewClients(){
 	// update any connections
 	old_connections=clt_rtr_connections.size();
 	utilities->UpdateConnections("psql_read", clt_rtr_socket, clt_rtr_connections);
-	utilities->UpdateConnections("psql_rep",  clt_rtr_socket, clt_rtr_connections);
 	new_connections+=clt_rtr_connections.size()-old_connections;
 	old_connections=mm_rcv_connections.size();
 	utilities->UpdateConnections("mm_rcv", mm_rcv_socket, mm_rcv_connections);
@@ -809,11 +808,14 @@ bool ReceiveSQL::GetClientReadQueries(){
 			
 			// do a safety check to ensure this is actually a write query (optional)
 			//std::string query = reinterpret_cast<const char*>(outputs.at(3).data());
+			// std::string::find is case-sensitive, so cast to all uppercase
+			std::string uppercasequery;
+			for(int i=0; i<qry_string.length(); ++i) uppercasequery.append(1,std::toupper(qry_string[i]));
 			
-			bool is_write_txn = (qry_string.find("INSERT")!=std::string::npos) ||
-								(qry_string.find("UPDATE")!=std::string::npos) ||
-								(qry_string.find("DELETE")!=std::string::npos) ||
-								(qry_string.find("INTO")!=std::string::npos);
+			bool is_write_txn = (uppercasequery.find("INSERT")!=std::string::npos) ||
+								(uppercasequery.find("UPDATE")!=std::string::npos) ||
+								(uppercasequery.find("DELETE")!=std::string::npos) ||
+								(uppercasequery.find("INTO")!=std::string::npos);
 			
 			if(not is_write_txn || (am_master && handle_unexpected_writes)){
 				// sanity check passed
