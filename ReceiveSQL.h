@@ -30,13 +30,14 @@ class ReceiveSQL{
 	~ReceiveSQL(){};
 	
 	bool Initialise(std::string configfile);
-	bool InitPostgres(Store& m_variables, std::string prefix);
+	bool InitPostgres(Store& m_variables);
 	bool InitZMQ(Store& m_variables);
 	bool InitMessaging(Store& m_variables);
 	bool InitServiceDiscovery(Store& m_variables);
 	
 	bool Execute();
 	bool FindNewClients();
+	bool FindNewClients_v2();
 	bool GetClientWriteQueries();
 	bool GetClientReadQueries();
 	bool GetClientLogMessages();
@@ -73,10 +74,8 @@ class ReceiveSQL{
 	bool Receive(zmq::socket_t* sock, std::vector<zmq::message_t>& outputs);
 	
 	private:
-	// an instance of the postgres interface class to communicate with the run database
-	Postgres m_rundb;
-	Postgres m_monitoringdb;
-	
+	// an instance of the postgres interface class to communicate with the database(s)
+	Postgres m_database;
 	
 	int stdio_verbosity;
 	int db_verbosity;

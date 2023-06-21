@@ -1,18 +1,14 @@
-ToolDAQPath=/home/ToolDAQApplication/ToolDAQ
+Dependencies=/opt
 
-PostgresLib= -L $(ToolDAQPath)/libpqxx-6.4.5/install/lib -lpqxx -L /usr/pgsql-12/lib -lpq
-PostgresInclude= -I $(ToolDAQPath)/libpqxx-6.4.5/install/include -I /usr/pgsql-12/include
+PostgresLib= -L $(Dependencies)/libpqxx-6.4.5/install/lib -lpqxx -L `pg_config --libdir` -lpq
+PostgresInclude= -I $(Dependencies)/libpqxx-6.4.5/install/include -I `pg_config --includedir`
+#PostgresLib= -L $(Dependencies)/libpqxx-6.4.5/install/lib -lpqxx `pg_config --ldflags` `pg_config --libs`
 
-ZMQLib= -L $(ToolDAQPath)/zeromq-4.0.7/lib -lzmq
-ZMQInclude= -I $(ToolDAQPath)/zeromq-4.0.7/include
+ZMQLib= -L $(Dependencies)/zeromq-4.0.7/lib -lzmq
+ZMQInclude= -I $(Dependencies)/zeromq-4.0.7/include
 
-#ToolDAQPath=/home/marc/LinuxSystemFiles/ToolAnalysis/ToolAnalysis/ToolDAQ
-
-#PostgresLib= -L $(ToolDAQPath)/pqxx/install/lib -lpqxx -L /usr/pgsql-12/lib -lpq
-#PostgresInclude= -I $(ToolDAQPath)/pqxx/install/include -I /opt/rh/rh-postgresql12/root/use/include
-
-BoostLib= -L $(ToolDAQPath)/boost_1_66_0/install/lib -lboost_date_time
-BoostInclude= -I $(ToolDAQPath)/boost_1_66_0/install/include
+BoostLib= -L $(Dependencies)/boost_1_66_0/install/lib -lboost_date_time
+BoostInclude= -I $(Dependencies)/boost_1_66_0/install/include
 
 CXXFLAGS= -g -std=c++11 -fdiagnostics-color=always -Wno-attributes -O3
 

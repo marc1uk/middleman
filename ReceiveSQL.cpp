@@ -9,13 +9,6 @@
 // of EXECUTE on the function pg_promote. We should grant this to the middleman,
 // which otherwise runs as the toolanalysis user....
 
-// TODO: currently pg_promote is sent to the rundb, with last update time also
-// queried from the rundb. But what about the monitoringdb? Does pg_promote
-// act on both? We should check. Also, get the newest update time from either.
-
-// TODO: currently Read and Write queries are implicitly sent to the monitoringdb,
-// we need to include a variable saying where it should go!!!
-
 // TODO check validity of reinterpret_casts?
 
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
@@ -32,12 +25,8 @@ bool ReceiveSQL::Initialise(std::string configfile){
 	get_ok = InitMessaging(m_variables);
 	if(not get_ok) return false;
 	
-	Log("Initialising run database",3);
-	get_ok = InitPostgres(m_variables, "run");
-	if(not get_ok) return false;
-	
-	Log("Initialising monitoring database",3);
-	get_ok = InitPostgres(m_variables, "monitoring");
+	Log("Initialising database",3);
+	get_ok = InitPostgres(m_variables);
 	if(not get_ok) return false;
 	
 	Log("Initializing ZMQ sockets",3);
@@ -56,7 +45,7 @@ bool ReceiveSQL::Execute(){
 	
 	// find new clients
 	Log("Finding new clients",4);
-	get_ok = FindNewClients();
+	get_ok = FindNewClients_v2();
 	
 	// poll the input sockets for messages
 	Log("Polling input sockets",4);
@@ -177,7 +166,7 @@ bool ReceiveSQL::Finalise(){
 //                        Main Subroutines
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
-bool ReceiveSQL::InitPostgres(Store& m_variables, std::string prefix){
+bool ReceiveSQL::InitPostgres(Store& m_variables){
 	
 	// ##########################################################################
 	// default initialize variables
@@ -187,7 +176,7 @@ bool ReceiveSQL::InitPostgres(Store& m_variables, std::string prefix){
 	int dbport = 5432;                   // database port
 	std::string dbuser = "";             // database user to connect as. defaults to PGUSER env var if empty.
 	std::string dbpasswd = "";           // database password. defaults to PGPASS or PGPASSFILE if not given.
-	std::string dbname = prefix+"db";    // database name
+	std::string dbname = "postgres";     // database name
 	
 	// on authentication: we may consider using 'ident', which will permit the
 	// user to connect to the database as the postgres user with name matching
@@ -203,24 +192,14 @@ bool ReceiveSQL::InitPostgres(Store& m_variables, std::string prefix){
 	m_variables.Get("port",dbport);
 	m_variables.Get("user",dbuser);
 	m_variables.Get("passwd",dbpasswd);
-	//m_variables.Get(prefix+"name",dbname);
+	m_variables.Get("dbname",dbname);
 	
 	// ##########################################################################
 	// # Open connection
 	// ##########################################################################
 	
 	// pass connection details to the postgres interface class
-	Postgres* interface;
-	if(prefix=="run"){
-		interface = &m_rundb;
-	} else if(prefix=="monitoring"){
-		interface = &m_monitoringdb;
-	} else {
-		Log(Concat("Uknown database prefix ",prefix," in InitPostgres"),0);
-		return false;
-	}
-	
-	interface->Init(dbhostname,
+	m_database.Init(dbhostname,
 	                dbhostaddr,
 	                dbport,
 	                dbuser,
@@ -228,9 +207,9 @@ bool ReceiveSQL::InitPostgres(Store& m_variables, std::string prefix){
 	                dbname);
 	
 	// try to open a connection to ensure we can do, or else bail out now.
-	get_ok = interface->OpenConnection();
+	get_ok = m_database.OpenConnection();
 	if(not get_ok){
-		Log(Concat("Error! Failed to open connection to the postgres ",prefix," database!"),0);
+		Log(Concat("Error! Failed to open connection to the ",dbname," database!"),0);
 		return false;
 	}
 	
@@ -616,6 +595,21 @@ bool ReceiveSQL::FindNewClients(){
 		std::cout<<service<<" connected on "<<athing.first<<std::endl;
 	}
 	*/
+	
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::FindNewClients_v2(){
+	
+	int new_connections = utilities->ConnectToEndpoints(clt_rtr_socket, clt_rtr_connections, clt_sub_socket, clt_sub_connections, log_sub_socket, log_sub_connections);
+	
+	if(new_connections>0){
+		Log("Made "+std::to_string(new_connections)+" new connections!",3);
+	} else {
+		Log("No new clients found",5);
+	}
 	
 	return true;
 }
@@ -1067,16 +1061,7 @@ bool ReceiveSQL::RunNextWriteQuery(){
 		
 		Query& next_msg = wrt_txn_queue.begin()->second;
 		std::string err;
-		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
-		Postgres* thedb=nullptr;
-		if(next_msg.database=="rundb")        thedb = &m_rundb;
-		if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
-		if(thedb==nullptr){
-			err="Middleman: Uknown database '"+next_msg.database +"'";
-			next_msg.query_ok=false;
-		} else {
-			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		}
+		next_msg.query_ok = m_database.QueryAsJsons(next_msg.query, &next_msg.response, &err);
 		if(not next_msg.query_ok){
 			Log(Concat("Write query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),1);
 			++write_queries_failed;
@@ -1102,17 +1087,7 @@ bool ReceiveSQL::RunNextReadQuery(){
 		
 		Query& next_msg = rd_txn_queue.begin()->second;
 		std::string err;
-		// TODO don't hard-code the databases we have? create a std::map<std::string name, Postgres database)
-		Postgres* thedb=nullptr;
-		if(next_msg.database=="rundb")             thedb = &m_rundb;
-		else if(next_msg.database=="monitoringdb") thedb = &m_monitoringdb;
-		//else { std::cerr<<"didn't match database name"<<std::endl; }
-		if(thedb==nullptr){
-			err="Middleman: Unknown database '"+next_msg.database +"'";
-			next_msg.query_ok=false;
-		} else {
-			next_msg.query_ok = thedb->QueryAsJsons(next_msg.query, &next_msg.response, &err);
-		}
+		next_msg.query_ok = m_database.QueryAsJsons(next_msg.query, &next_msg.response, &err);
 		if(not next_msg.query_ok){
 			Log(Concat("Read query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),1);
 			++read_queries_failed;
@@ -1830,7 +1805,7 @@ bool ReceiveSQL::UpdateRole(){
 		
 		// promote the database out of recovery mode. 60s timeout.
 		std::string err;
-		get_ok = m_rundb.Promote(60,&err);
+		get_ok = m_database.Promote(60,&err);
 		
 		// should we also stop broadcasting ourself as a source of logging messages?
 		utilities->RemoveService("logging");
@@ -1866,7 +1841,7 @@ bool ReceiveSQL::UpdateRole(){
 		std::string err;
 		
 		// demote the database to standby. 60s timeout.
-		get_ok = m_rundb.Demote(60, &err);
+		get_ok = m_database.Demote(60,&err);
 		
 		// check for errors
 		if(get_ok){
@@ -1977,7 +1952,7 @@ bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
 	std::string err;
 	std::vector<std::string> results;
 	
-	bool query_ok = m_rundb.QueryAsStrings(query, &results, 'r', &err);
+	bool query_ok = m_database.QueryAsStrings(query, &results, 'r', &err);
 	
 	if(not query_ok || results.size()==0){
 		Log(Concat("Error getting last commit timestamp in negotiation! ",
@@ -2162,13 +2137,13 @@ bool ReceiveSQL::LogToDb(LogMsg logmsg){
 	std::string err;
 	
 	// run the insert
-	get_ok = m_monitoringdb.Insert(tablename,
-	                               logging_fields,
-	                               &err,
-	                               logmsg.client_id,
-	                               logmsg.timestamp,
-	                               logmsg.severity,
-	                               logmsg.message);
+	get_ok = m_database.Insert(tablename,
+	                           logging_fields,
+	                           &err,
+	                           logmsg.client_id,
+	                           logmsg.timestamp,
+	                           logmsg.severity,
+	                           logmsg.message);
 	
 	// check for errors
 	if(not get_ok){

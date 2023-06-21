@@ -3,8 +3,9 @@ stopfile stop
 #hostname localhost
 #hostaddr 127.0.0.1
 port 5432
-user tooldaq
-passwd tooldaq19
+dbname daq
+#user tooldaq
+#passwd tooldaq19
 #context_io_threads 1
 clt_sub_port 77778
 #clt_dlr_port 77779
@@ -43,6 +44,6 @@ cache_period_ms 10000
 # if writes are sent to the read-only port, but we're master, should we accept them?
 handle_unexpected_writes 0
 stats_period_ms 60000
-stdio_verbosity 4
+stdio_verbosity 1
 db_verbosity 1
 service_discovery_config ServiceDiscoveryConfig
