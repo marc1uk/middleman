@@ -1,5 +1,7 @@
 # application will loop until this file is found
 stopfile stop
+# identity of the middleman, used for logging
+zmq_identity middleman
 #hostname localhost
 #hostaddr 127.0.0.1
 port 5432

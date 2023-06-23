@@ -19,6 +19,8 @@ bool ReceiveSQL::Initialise(std::string configfile){
 	Store m_variables;
 	Log("Reading config",3);
 	m_variables.Initialise(configfile);
+	my_id = "middleman";
+	m_variables.Get("zmq_identity",my_id);
 	
 	// needs to be done first (or at least before InitZMQ)
 	Log("Initialising Messaging Queues",3);
