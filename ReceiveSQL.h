@@ -79,6 +79,10 @@ class ReceiveSQL{
 	
 	int stdio_verbosity;
 	int db_verbosity;
+	int v_error=0;
+	int v_warning=1;
+	int v_message=2;
+	int v_debug=3;
 	
 	zmq::context_t* context=nullptr;
 	

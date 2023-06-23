@@ -169,17 +169,17 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
         // try to connect to the standard PGClient ports
         
         if(readrep_conns.count(ip)==0){
-          ++num_new_connections;
           registered=true;
           // read queries and responses
           type = "psql_read";
           store_port=std::to_string(read_port_num); // "77777";
           service->Set("msg_value",type);
           service->Set("remote_port",store_port);
-          tmp=ip + ":" + store_port;
           readrep_conns[ip]=service;
+          tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
           readrep_sock->connect(tmp.c_str());
+          ++num_new_connections;
           
           // write and logging sockets are only connected to by the master middleman
           if(write_sock){
@@ -188,10 +188,11 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
             store_port=std::to_string(write_port_num); // "77778";
             service->Set("msg_value",type);
             service->Set("remote_port",store_port);
-            tmp=ip + ":" + store_port;
             write_conns[ip]=service;
+            tmp=ip + ":" + store_port;
             tmp="tcp://"+ tmp;
             write_sock->connect(tmp.c_str());
+            ++num_new_connections;
           }
           
           // FIXME currently the PGClient does not actually bind to a logging socket
@@ -204,10 +205,11 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
             store_port=std::to_string(log_port_num); // "77775";
             service->Set("msg_value",type);
             service->Set("remote_port",store_port);
-            tmp=ip + ":" + store_port;
             log_conns[ip]=service;
+            tmp=ip + ":" + store_port;
             tmp="tcp://"+ tmp;
             log_sock->connect(tmp.c_str());
+            ++num_new_connections;
           }
           
         } // else we're already connected to this service
@@ -216,16 +218,16 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
         // else this is a middleman service. connect to its inter-middleman endpoint
         
         if(mm_conns.count(ip)==0){
-          ++num_new_connections;
           registered=true;
           type="middleman";
           store_port=std::to_string(mm_port_num);
           service->Set("msg_value",type);
           service->Set("remote_port",store_port);
-          tmp=ip + ":" + store_port;
           mm_conns[ip]=service;
+          tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
           mm_sock->connect(tmp.c_str());
+          ++num_new_connections;
         }
         
       }

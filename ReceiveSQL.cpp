@@ -338,6 +338,7 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// this socket never sends, so a send timeout is irrelevant.
 	// don't linger too long, it looks like the program crashed.
 	mm_rcv_socket->setsockopt(ZMQ_LINGER, 10);
+	mm_rcv_socket->setsockopt(ZMQ_SUBSCRIBE,"",0);
 	// we'll connect this socket to clients with the utilities class
 	
 	// socket to broadcast our presence to the other middleman
@@ -614,10 +615,23 @@ bool ReceiveSQL::FindNewClients(){
 
 bool ReceiveSQL::FindNewClients_v2(){
 	
+	int clt_rtr_conns = clt_rtr_connections.size();
+	int clt_sub_conns = clt_sub_connections.size();
+	int log_conns = log_sub_connections.size();
+	int mm_conns = mm_rcv_connections.size();
+	
 	int new_connections = utilities->ConnectToEndpoints(clt_rtr_socket, clt_rtr_connections, clt_rtr_port, clt_sub_socket, clt_sub_connections, clt_sub_port, log_sub_socket, log_sub_connections, log_sub_port, mm_rcv_socket, mm_rcv_connections, mm_rcv_port);
 	
 	if(new_connections>0){
 		Log("Made "+std::to_string(new_connections)+" new connections!",3);
+		Log("Made "+std::to_string(clt_rtr_connections.size()-clt_rtr_conns)
+		   +" new read/reply socket connections",v_debug);
+		Log("Made "+std::to_string(clt_sub_connections.size()-clt_sub_conns)
+		   +" new write socket connections",v_debug);
+		Log("Made "+std::to_string(log_sub_connections.size()-log_conns)
+		   +" new logging socket connections",v_debug);
+		Log("Made "+std::to_string(mm_rcv_connections.size()-mm_conns)
+		   +" new middleman socket connections",v_debug);
 	} else {
 		Log("No new clients found",5);
 	}
@@ -1175,7 +1189,7 @@ bool ReceiveSQL::SendNextReply(){
 			// 4.... the SQL query results, if any. Each row is returned in a new message part.
 			
 			std::string client_str(reinterpret_cast<char*>(next_msg.client_id.data()));
-			int* msgID = reinterpret_cast<int*>(next_msg.message_id.data());
+			uint32_t* msgID = reinterpret_cast<uint32_t*>(next_msg.message_id.data());
 			Log("Sending next reply to ZMQ IDENTITY '"+client_str+"' for msg "+std::to_string(*msgID),1);
 			
 			// as soon as we send a zmq::message_t (i.e. client_id and message_id), they are "used up":
@@ -1297,7 +1311,7 @@ bool ReceiveSQL::BroadcastPresence(){
 	
 	if(elapsed_time.is_negative()){
 		
-		if(out_polls.at(2).revents & ZMQ_POLLOUT){
+		if(out_polls.at(1).revents & ZMQ_POLLOUT){
 			
 			++mm_broadcasts_sent;
 			uint32_t msg = am_master;
