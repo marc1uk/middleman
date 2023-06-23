@@ -113,18 +113,22 @@ class ReceiveSQL{
 	std::vector<zmq::pollitem_t> in_polls;
 	std::vector<zmq::pollitem_t> out_polls;
 	
-	// we need to keep some extra socket options around, for sockets that only the master uses.
+	// we need to keep some extra socket options around, some for sockets that only the master uses.
 	// these sockets get deleted and re-constructed as we get demoted/promoted, and we will need
-	// their variables to re-set the socket properties.
+	// their variables to create the sockets as required.
 	// (afaict you can't just disconnect and reconnect a socket...)
-	int log_sub_port;
-	int clt_sub_port;
 	int log_pub_port;
 	int clt_sub_socket_timeout;
 	int log_sub_socket_timeout;
-	
-	// also keep this since we need to pass it from InitZMQ to InitServiceDiscovery
+	// we also keep this one, but only to pass from InitZMQ to InitServiceDiscovery, where we register it
 	int mm_snd_port;
+	
+	// finally we also need to keep some port numbers that would normally be found dynamically,
+	// but we now need to hard-code them for the new FindNewClients_v2
+	int log_sub_port;
+	int clt_sub_port;
+	int clt_rtr_port;
+	int mm_rcv_port;
 	
 	// Master-Slave variables
 	// ######################

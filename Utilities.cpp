@@ -111,9 +111,11 @@ int Utilities::UpdateConnections(std::string ServiceName, zmq::socket_t* sock, s
     return connections.size();
   }
 
-int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, zmq::socket_t* log_sock, std::map<std::string,Store*> &log_conns){
+int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, int read_port_num, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, int write_port_num, zmq::socket_t* log_sock, std::map<std::string,Store*> &log_conns, int log_port_num, zmq::socket_t* mm_sock, std::map<std::string, Store*> &mm_conns, int mm_port_num){
     // it's like UpdateConnections, but rather than connecting to specifically named endpoints,
-    // we find all services, then assume they have associated postgres client endpoints
+    // we find all services that aren't middlemen and assume they have associated postgres client endpoints
+    // for middlemen, we likewise find their Control service and assume they have a inter-middlemen comms point
+    // since we connect to hidden endpoints, we need to already know their port numbers
     
     boost::uuids::uuid m_UUID=boost::uuids::random_generator()();
     long msg_id=0;
@@ -142,15 +144,15 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
     int num_new_connections=0;
 
     for(int i=0;i<size;i++){
-    
+      
       Store *service = new Store;
-
+      
       zmq::message_t servicem;
       Ireceive.recv(&servicem);
-
+      
       std::istringstream ss(static_cast<char*>(servicem.data()));
       service->JsonParser(ss.str());
-
+      
       std::string type;
       std::string uuid;
       std::string ip;
@@ -158,53 +160,77 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
       service->Get("msg_value",type);
       service->Get("uuid",uuid);
       service->Get("ip",ip);
-      //service->Get("remote_port",store_port);
-      store_port = "77777";  // use the read port to identify new services; any will do
+      service->Get("remote_port",store_port);
       std::string tmp;
-      tmp=ip + ":" + store_port;
+      bool registered=false;
       
-      if(readrep_conns.count(tmp)==0){
-        ++num_new_connections;
-        // read queries and responses
-        type = "psql_read";
-        store_port="77777";
-        service->Set("msg_value",type);
-        service->Set("remote_port",store_port);
-        tmp=ip + ":" + store_port;
-        readrep_conns[tmp]=service;
-        tmp="tcp://"+ tmp;
-        readrep_sock->connect(tmp.c_str());
+      if(type!="Middleman_Control"){
+        // if this isn't a middleman, assume it's a service with a PGClient
+        // try to connect to the standard PGClient ports
         
-        // write and logging sockets are only connected to by the master middleman
-        if(write_sock){
-          // write queries
-          type = "psql_write";
-          store_port="77778";
+        if(readrep_conns.count(ip)==0){
+          ++num_new_connections;
+          registered=true;
+          // read queries and responses
+          type = "psql_read";
+          store_port=std::to_string(read_port_num); // "77777";
           service->Set("msg_value",type);
           service->Set("remote_port",store_port);
           tmp=ip + ":" + store_port;
-          write_conns[tmp]=service;
+          readrep_conns[ip]=service;
           tmp="tcp://"+ tmp;
-          write_sock->connect(tmp.c_str());
-        }
+          readrep_sock->connect(tmp.c_str());
+          
+          // write and logging sockets are only connected to by the master middleman
+          if(write_sock){
+            // write queries
+            type = "psql_write";
+            store_port=std::to_string(write_port_num); // "77778";
+            service->Set("msg_value",type);
+            service->Set("remote_port",store_port);
+            tmp=ip + ":" + store_port;
+            write_conns[ip]=service;
+            tmp="tcp://"+ tmp;
+            write_sock->connect(tmp.c_str());
+          }
+          
+          // FIXME currently the PGClient does not actually bind to a logging socket
+          // so this connect attempt will fail. What then? no idea. The zmq-cpp wrapper socket_t::connect
+          // (http://api.zeromq.org/2-1:zmq-cpp) does not forward the returnval from the underlying
+          // zmq_connect call, so who knows, perhaps it just fails silently. Brilliant.
+          if(log_sock){
+            // logging messages
+            type = "logging";
+            store_port=std::to_string(log_port_num); // "77775";
+            service->Set("msg_value",type);
+            service->Set("remote_port",store_port);
+            tmp=ip + ":" + store_port;
+            log_conns[ip]=service;
+            tmp="tcp://"+ tmp;
+            log_sock->connect(tmp.c_str());
+          }
+          
+        } // else we're already connected to this service
         
-        // FIXME currently the PGClient does not actually bind to a logging socket
-        // so this connect attempt will fail. What then? no idea. The zmq-cpp wrapper socket_t::connect
-        // (http://api.zeromq.org/2-1:zmq-cpp) does not forward the returnval from the underlying
-        // zmq_connect call, so who knows, perhaps it just fails silently. Brilliant.
-        if(log_sock){
-          // logging messages
-          type = "logging";
-          store_port="77775";
+      } else {
+        // else this is a middleman service. connect to its inter-middleman endpoint
+        
+        if(mm_conns.count(ip)==0){
+          ++num_new_connections;
+          registered=true;
+          type="middleman";
+          store_port=std::to_string(mm_port_num);
           service->Set("msg_value",type);
           service->Set("remote_port",store_port);
           tmp=ip + ":" + store_port;
-          log_conns[tmp]=service;
+          mm_conns[ip]=service;
           tmp="tcp://"+ tmp;
-          log_sock->connect(tmp.c_str());
+          mm_sock->connect(tmp.c_str());
         }
         
-      } else{
+      }
+      
+      if(!registered){
         delete service;
         service=0;
       }

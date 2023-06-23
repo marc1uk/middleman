@@ -249,10 +249,17 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// 6/7. we use PUB/SUB so that clients can publish logging messages without worrying about who
 	// is the master. They won't require a reply.
 	
-	// specify the ports everything talks on. All listeners connect to the remote port
-	// which is picked up by ServiceDiscovery
-	mm_snd_port =  77797;       // for sending middleman beacons
-	log_pub_port = 77776;       // for sending logging messages to the master
+	// specify the ports everything talks on
+	mm_snd_port =  77797;         // for sending middleman beacons
+	log_pub_port = 24101;         // for sending logging messages to the master
+	// listeners connect to whatever remote port is picked up by ServiceDiscovery, so normally
+	// the middleman doesn't need to know what ports to listen on, only those it sends on.
+	// But we're now doing away with advertising all ports, and connecting to invisible endpoints.
+	clt_rtr_port = 77777;         // for client routers sending reads
+	clt_sub_port = 77778;         // for client pubbers sending writes.
+	log_sub_port = log_pub_port;  // for client pubbers sending logs.
+	mm_rcv_port = mm_snd_port;    // for other middlemen sending beacons
+
 	// socket timeouts, so nothing blocks indefinitely
 	clt_sub_socket_timeout=500;
 	int clt_rtr_socket_timeout=500; // used for both sends and receives
@@ -285,6 +292,10 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	m_variables.Get("log_sub_socket_timeout",log_sub_socket_timeout);
 	m_variables.Get("inpoll_timeout",inpoll_timeout);
 	m_variables.Get("outpoll_timeout",outpoll_timeout);
+	m_variables.Get("clt_rtr_port", clt_rtr_port);
+	m_variables.Get("clt_sub_port", clt_sub_port);
+	m_variables.Get("log_sub_port", log_sub_port);
+	m_variables.Get("mm_rcv_port", mm_rcv_port);
 	
 	// ##########################################################################
 	// # Open connections
@@ -322,7 +333,7 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// ----------------------------------------------------
 	mm_rcv_socket = new zmq::socket_t(*context, ZMQ_SUB);
 	mm_rcv_socket->setsockopt(ZMQ_RCVTIMEO, mm_rcv_socket_timeout);
-	// this socket never receives, so a recieve timeout is irrelevant.
+	// this socket never sends, so a send timeout is irrelevant.
 	// don't linger too long, it looks like the program crashed.
 	mm_rcv_socket->setsockopt(ZMQ_LINGER, 10);
 	// we'll connect this socket to clients with the utilities class
@@ -409,7 +420,7 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	
 	// how frequently to broadcast - note that we send intermittent messages about our status
 	// over the mm_snd_port anyway, so the ServiceDiscovery is only used for the initial discovery.
-	// since we also use the mm_snd_port and mm_rcv_port for negotiation, we can't do without them,
+	// since we also use the mm_snd_sock and mm_rcv_sock for negotiation, we can't do without them,
 	// so it's probably not worth trying to move this functionality into the ServiceDiscovery class.
 	int broadcast_period_sec = 5;
 	service_discovery_configstore.Get("broadcast_period",broadcast_period_sec);
@@ -456,20 +467,18 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	utilities = new Utilities(context);
 	
 	// this lets us connect our listener socket to all clients advertising a given service with:
-	utilities->UpdateConnections("psql_read", clt_rtr_socket, clt_rtr_connections);
-	utilities->UpdateConnections("middleman", mm_rcv_socket, mm_rcv_connections);
-	// additional listening for master on write query and logging ports
-	if(am_master){
-		utilities->UpdateConnections("psql_write", clt_sub_socket, clt_sub_connections);
-		utilities->UpdateConnections("logging", log_sub_socket, log_sub_connections);
-	}
-	// we'll call this each Execute loop to connect to any newly found clients.
-	
-	// we can also register services we wish to broadcast as follows:
+	// Utilities::UpdateConnections({service_name}, {listener_socket}, {map_connections});
+	// where map_connections is used to keep track of which nodes we're connected to.
+	// This is called in FindNewClients at the end of Execute loop.
+	// We can register services we wish to broadcast (so that others may connect to us) as follows:
+	/*
 	utilities->AddService("middleman", mm_snd_port);
 	if(!am_master){
 		utilities->AddService("logging",log_pub_port);
 	}
+	*/
+	// for now we comment this out as ben prefers to assume such services are implicitly available
+	// (hence FindNewClients->FindNewClientsv2)
 	
 	// note that it is not necessary to register the RemoteControl service,
 	// this is automatically done by the ServiceDiscovery class.
@@ -567,7 +576,7 @@ bool ReceiveSQL::FindNewClients(){
 	utilities->UpdateConnections("psql_read", clt_rtr_socket, clt_rtr_connections);
 	new_connections+=clt_rtr_connections.size()-old_connections;
 	old_connections=mm_rcv_connections.size();
-	utilities->UpdateConnections("mm_rcv", mm_rcv_socket, mm_rcv_connections);
+	utilities->UpdateConnections("middleman", mm_rcv_socket, mm_rcv_connections);
 	new_connections+=mm_rcv_connections.size()-old_connections;
 	
 	// additional listening for master on write query and logging ports
@@ -603,7 +612,7 @@ bool ReceiveSQL::FindNewClients(){
 
 bool ReceiveSQL::FindNewClients_v2(){
 	
-	int new_connections = utilities->ConnectToEndpoints(clt_rtr_socket, clt_rtr_connections, clt_sub_socket, clt_sub_connections, log_sub_socket, log_sub_connections);
+	int new_connections = utilities->ConnectToEndpoints(clt_rtr_socket, clt_rtr_connections, clt_rtr_port, clt_sub_socket, clt_sub_connections, clt_sub_port, log_sub_socket, log_sub_connections, log_sub_port, mm_rcv_socket, mm_rcv_connections, mm_rcv_port);
 	
 	if(new_connections>0){
 		Log("Made "+std::to_string(new_connections)+" new connections!",3);
@@ -1859,7 +1868,7 @@ bool ReceiveSQL::UpdateRole(){
 			in_log_queue.clear();
 			
 			// we also need to start advertising ourself as a source of logging messages
-			utilities->AddService("logging", log_pub_port);
+			//utilities->AddService("logging", log_pub_port); -> not as of FindNewClientsv2
 			
 		} else {
 			

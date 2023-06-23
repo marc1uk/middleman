@@ -8,12 +8,9 @@ dbname daq
 #passwd tooldaq19
 #context_io_threads 1
 clt_sub_port 77778
-#clt_dlr_port 77779
 clt_rtr_port 77777
-mm_rcv_port 777798
 mm_snd_port 777797
-log_pub_port 77776
-log_sub_port 77775
+log_pub_port 24010
 
 # all timeouts in ms
 clt_sub_socket_timeout 500
