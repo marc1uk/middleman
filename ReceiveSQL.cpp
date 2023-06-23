@@ -259,8 +259,6 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// But we're now doing away with advertising all ports, and connecting to invisible endpoints.
 	clt_rtr_port = 77777;         // for client routers sending reads
 	clt_sub_port = 77778;         // for client pubbers sending writes.
-	log_sub_port = log_pub_port;  // for client pubbers sending logs.
-	mm_rcv_port = mm_snd_port;    // for other middlemen sending beacons
 
 	// socket timeouts, so nothing blocks indefinitely
 	clt_sub_socket_timeout=500;
@@ -296,8 +294,10 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	m_variables.Get("outpoll_timeout",outpoll_timeout);
 	m_variables.Get("clt_rtr_port", clt_rtr_port);
 	m_variables.Get("clt_sub_port", clt_sub_port);
-	m_variables.Get("log_sub_port", log_sub_port);
-	m_variables.Get("mm_rcv_port", mm_rcv_port);
+	
+	// these must match
+	log_sub_port = log_pub_port;  // for client pubbers sending logs.
+	mm_rcv_port = mm_snd_port;    // for other middlemen sending beacons
 	
 	// ##########################################################################
 	// # Open connections
@@ -942,24 +942,34 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 	// to ensure we don't start negotiation based on old, stale requests.
 	while(in_polls.at(1).revents & ZMQ_POLLIN){
 		
-		
-		++mm_broadcasts_recvd;  // FIXME this includes negotiation requests
 		// We do. Receive it.
 		std::vector<zmq::message_t> outputs;
 		get_ok = Receive(mm_rcv_socket, outputs);
 		if(not get_ok){
 			Log(Concat("error receiving message part ",outputs.size()+1," of message from middleman"),0);
-			++mm_broadcast_recv_fails;  // FIXME this could include negotiation requests
+			++mm_broadcast_recv_fails;  // FIXME this includes negotiation requests and our own broadcasts
 			return false;
 		}
 		
-		// normal broadcast message is 1 part
-		if(outputs.size()==1){
+		// get the identity of the sender
+		if(outputs.size()>0){
+			std::string sender_id(outputs.at(0).size(),'\0');
+			memcpy((void*)sender_id.data(),outputs.at(0).data(),outputs.at(0).size());
+			
+			// ignore our own messages
+			if(sender_id == my_id) return true;
+		}
+		
+		// normal broadcast message is 2 parts
+		if(outputs.size()==2){
 			
 			// got a broadcast message format.
-			// the received message should be an integer indicating whether the other
-			// middleman is in the master role. If there's a clash, we'll need to negotiate.
-			uint32_t is_master = *(reinterpret_cast<uint32_t*>(outputs.at(0).data()));
+			++mm_broadcasts_recvd;  // FIXME this includes negotiation requests
+			
+			// in broadcast messages the second part is an integer
+			// indicating whether that sender considers itself the master.
+			// If there's a clash, we'll need to negotiate.
+			uint32_t is_master = *(reinterpret_cast<uint32_t*>(outputs.at(1).data()));
 			
 			if(is_master && am_master){
 				Log("Both middleman are masters! ...",3);
@@ -983,12 +993,15 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 			
 			last_mm_receipt = boost::posix_time::microsec_clock::universal_time();
 			
-		} else if(outputs.size()==2){
+		} else if(outputs.size()==3){
 			
-			// negotiation is done via the same socket, but involves 2-part messages.
-			// if the other middleman has invoked negotiation, we may have received 2 parts.
-			their_header = std::string(reinterpret_cast<const char*>(outputs.at(0).data()));
-			their_timestamp = std::string(reinterpret_cast<const char*>(outputs.at(1).data()));
+			// negotiation is done via the same socket, but involves 3-part messages.
+			// if the other middleman has invoked negotiation, we may have received 3 parts.
+			their_header.resize(outputs.at(1).size(),'\0');
+			memcpy((void*)their_header.data(),outputs.at(1).data(),outputs.at(1).size());
+			their_timestamp.resize(outputs.at(2).size(),'\0');
+			memcpy((void*)their_timestamp.data(),outputs.at(2).data(),outputs.at(2).size());
+			
 			
 			if(their_header=="Negotiate"){
 				// it's a request to negotiate
@@ -1010,7 +1023,7 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 			}
 			
 		} else {
-			// else more than 2 parts
+			// else more than 3 parts
 			Log(Concat("unexpected ",outputs.size()," part message from middleman"),0);
 			++mm_broadcast_recv_fails; // FIXME this could include negotiation requests
 			return false;
@@ -1315,7 +1328,7 @@ bool ReceiveSQL::BroadcastPresence(){
 			
 			++mm_broadcasts_sent;
 			uint32_t msg = am_master;
-			get_ok = Send(mm_snd_socket, false, msg);
+			get_ok = Send(mm_snd_socket, false, my_id, msg);
 			
 			if(get_ok){
 				last_mm_send = boost::posix_time::microsec_clock::universal_time();
@@ -1326,7 +1339,7 @@ bool ReceiveSQL::BroadcastPresence(){
 				return false;
 			}
 			
-		} // else noone to send to...
+		} /*else { std::cout<<"no listeners"<<std::endl; }*/
 		
 	}  // else not yet.
 	
@@ -1550,9 +1563,9 @@ bool ReceiveSQL::NegotiateMaster(std::string their_header, std::string their_tim
 	// we need to establish who's the master.
 	// The master will be decided based on who has the most recently modified datbase.
 	
-	// 1. We send <"Negotiate"> <timestamp>
+	// 1. We send <"our_ID"> <"Negotiate"> <timestamp>
 	// 2. Other compares this timestamp with when their database was last modified
-	// 3. Other middleman responds <"VerifyMaster"/"VerifyStandby"> <timestamp>
+	// 3. Other middleman responds <"their_ID"> <"VerifyMaster"/"VerifyStandby"> <timestamp>
 	// 4. We take on the other role than they indicated.
 	//    Optionally we may verify their decision by comparing their returned timestamp against ours.
 	
@@ -1602,7 +1615,7 @@ bool ReceiveSQL::NegotiationRequest(){
 		if(first_send || elapsed_time.is_negative()){
 			
 			// send out our message
-			int ret = PollAndSend(mm_snd_socket, out_polls.at(1), outpoll_timeout, our_header, our_timestamp);
+			int ret = PollAndSend(mm_snd_socket, out_polls.at(1), outpoll_timeout, my_id, our_header, our_timestamp);
 			
 			// check for errors
 			if(ret==-3) Log("Error polling out socket in NegotiateMaster() call!",0);
@@ -1635,11 +1648,19 @@ bool ReceiveSQL::NegotiationRequest(){
 		
 		// if no errors, handle response
 		if(ret==0){
-			// we got a message - check how many parts received
+			// we got a message
+			if(messages.size()>0){
+				// first part is the sender id
+				std::string sender_id(messages.at(0).size(),'\0');
+				memcpy((void*)sender_id.data(),messages.at(0).data(),messages.at(0).size());
+				
+				// ignore our own messages
+				if(sender_id == my_id) continue;
+			}
 			
-			// 1 part message is probably got a normal broadcast message. process it.
-			if(messages.size()==1){
-				uint32_t is_master = *(reinterpret_cast<uint32_t*>(messages.front().data()));
+			// 2 part message is probably got a normal broadcast message. process it.
+			if(messages.size()==2){
+				uint32_t is_master = *(reinterpret_cast<uint32_t*>(messages.back().data()));
 				if((is_master && am_master) || (!is_master && !am_master)){
 					// we need to negotiate - we're aready doing it!
 				} else {
@@ -1650,17 +1671,19 @@ bool ReceiveSQL::NegotiationRequest(){
 				last_mm_receipt = boost::posix_time::microsec_clock::universal_time();
 			}
 			
-			// more than 2 parts is an invalid message format. discard it.
-			else if(messages.size()>2){
+			// more than 3 parts is an invalid message format. discard it.
+			else if(messages.size()>3){
 				Log(Concat("Unexpected ",messages.size()," part message from middleman"),0);
 			}
 			
-			// else 2 parts - the expected format is a header, and a timestamp.
+			// else 3 parts - the expected format is an id, a header, and a timestamp.
 			else {
 				
 				// unpack the message
-				msg_type = std::string(reinterpret_cast<const char*>(messages.at(0).data()));
-				std::string their_timestamp(reinterpret_cast<const char*>(messages.at(1).data()));
+				msg_type.resize(messages.at(1).size(),'\0');
+				memcpy((void*)msg_type.data(),messages.at(1).data(),messages.at(1).size());
+				std::string their_timestamp(messages.at(2).size(),'\0');
+				memcpy((void*)their_timestamp.data(),messages.at(2).data(),messages.at(2).size());
 				
 				// ensure it's one we recognise
 				if(msg_type=="Negotiate" || msg_type=="VerifyMaster" || msg_type=="VerifyStandby"){
@@ -1718,7 +1741,7 @@ bool ReceiveSQL::NegotiationRequest(){
 		// they must've opened negotiations at the same time we did. They may be expecting a reply.
 		
 		// send the reply
-		int ret = PollAndSend(mm_snd_socket, out_polls.at(1), outpoll_timeout, our_header, our_timestamp);
+		int ret = PollAndSend(mm_snd_socket, out_polls.at(1), outpoll_timeout, my_id, our_header, our_timestamp);
 		
 		// handle errors
 		if(ret==-3) Log("Error polling out socket in NegotiateMaster() call!",0);
@@ -1777,7 +1800,7 @@ bool ReceiveSQL::NegotiationReply(std::string their_header, std::string their_ti
 	}
 	
 	// inform the other middleman
-	int ret = PollAndSend(mm_snd_socket, out_polls.at(1), 500, our_header, our_timestamp);
+	int ret = PollAndSend(mm_snd_socket, out_polls.at(1), 500, my_id, our_header, our_timestamp);
 	
 	// handle errors
 	if(ret==-3) Log("Error polling out socket in NegotiateMaster() call!",0);
