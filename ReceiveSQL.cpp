@@ -1351,14 +1351,19 @@ bool ReceiveSQL::BroadcastPresence(){
 bool ReceiveSQL::CleanupCache(){
 	
 	// cleanup any old messages from the cache
-	for(std::pair<const std::pair<std::string, uint32_t>, Query>& msg : cache){
-		
+	// to remove elements from a std::map while iterating through it, we can't use a range-based loop
+	// instead do it this way:
+	for(std::map<std::pair<std::string, uint32_t>, Query>::iterator it=cache.begin(); it!=cache.end(); ){
+		Query& msg = it->second;
 		elapsed_time =
-			cache_period - (msg.second.recpt_time - boost::posix_time::microsec_clock::universal_time());
+			cache_period - (boost::posix_time::microsec_clock::universal_time() - msg.recpt_time);
 		
 		if(elapsed_time.is_negative()){
 			// drop from the cache
-			cache.erase(msg.first);
+			it = cache.erase(it);
+			// std::map::erase returns a new, valid iterator to the next element after that erased.
+		} else {
+			++it;
 		}
 	}
 	
