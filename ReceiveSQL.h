@@ -200,53 +200,53 @@ class ReceiveSQL{
 	
 	// Monitoring stats.
 	// number of messages received over zmq sockets, and how many failed.
-	unsigned long write_queries_recvd;
-	unsigned long write_query_recv_fails;
-	unsigned long read_queries_recvd;
-	unsigned long read_query_recv_fails;
-	unsigned long log_msgs_recvd;
-	unsigned long log_msg_recv_fails;
-	unsigned long mm_broadcasts_recvd;
-	unsigned long mm_broadcast_recv_fails;
+	unsigned long write_queries_recvd = 0;
+	unsigned long write_query_recv_fails = 0;
+	unsigned long read_queries_recvd = 0;
+	unsigned long read_query_recv_fails = 0;
+	unsigned long log_msgs_recvd = 0;
+	unsigned long log_msg_recv_fails = 0;
+	unsigned long mm_broadcasts_recvd = 0;
+	unsigned long mm_broadcast_recv_fails = 0;
 	
 	// number of postgres queries that failed to run
-	unsigned long write_queries_failed;
-	unsigned long read_queries_failed;
+	unsigned long write_queries_failed = 0;
+	unsigned long read_queries_failed = 0;
 	
 	// number of postgres monitoring insertions that failed to run
-	unsigned long in_logs_failed;
+	unsigned long in_logs_failed = 0;
 	
 	// number of messages sent over zmq sockets, and how many failed.
-	unsigned long acks_sent;
-	unsigned long ack_send_fails;
-	unsigned long log_msgs_sent;
-	unsigned long log_send_fails;
-	unsigned long mm_broadcasts_sent;
-	unsigned long mm_broadcasts_failed;
+	unsigned long acks_sent = 0;
+	unsigned long ack_send_fails = 0;
+	unsigned long log_msgs_sent = 0;
+	unsigned long log_send_fails = 0;
+	unsigned long mm_broadcasts_sent = 0;
+	unsigned long mm_broadcasts_failed = 0;
 	
 	// number of times we've had role conflicts
-	unsigned long master_clashes;
-	unsigned long standby_clashes;
+	unsigned long master_clashes = 0;
+	unsigned long standby_clashes = 0;
 	// number of times we've failed to successfully negotiation
-	unsigned long master_clashes_failed;
-	unsigned long standby_clashes_failed;
+	unsigned long master_clashes_failed = 0;
+	unsigned long standby_clashes_failed = 0;
 	// number of times master went silent
-	unsigned long self_promotions;
-	unsigned long self_promotions_failed;
+	unsigned long self_promotions = 0;
+	unsigned long self_promotions_failed = 0;
 	
 	// number of times we've changed roles
-	unsigned long promotions;
-	unsigned long promotions_failed;
-	unsigned long demotions;
-	unsigned long demotions_failed;
+	unsigned long promotions = 0;
+	unsigned long promotions_failed = 0;
+	unsigned long demotions = 0;
+	unsigned long demotions_failed = 0;
 	
 	// number of messages we've dropped from queues due to overflow
-	unsigned long dropped_writes;
-	unsigned long dropped_reads;
-	unsigned long dropped_acks;
+	unsigned long dropped_writes = 0;
+	unsigned long dropped_reads = 0;
+	unsigned long dropped_acks = 0;
 	// number of log messages we've fropped from queues due to overflow
-	unsigned long dropped_logs_out;
-	unsigned long dropped_logs_in;
+	unsigned long dropped_logs_out = 0;
+	unsigned long dropped_logs_in = 0;
 	
 	// how often to calculate stats
 	boost::posix_time::time_duration stats_period;

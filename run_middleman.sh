@@ -17,9 +17,11 @@ export PGDATA=/var/lib/pgsql/data
 # wait up to 30s for the postgres server to be ready
 #pg_isready -t 30
 
-# having it in a loop is a nice way to allow stop/reloading/recovery
-# but does mean obviously make it harder to fully terminate
-# we provide a quit file in the config, but we need to parse that file
+# running the middleman in a loop enables reloading/recovery
+# but we need to provide some means to fully terminate.
+# the configuration specifies a quit file; if found, we quit
+# default is '$PWD/quit', but check the config for user a override
+STOPFILE="stop"
 QUITFILE="quit"
 while read -r -a LINE; do 
 	#echo "next line is '${LINE}'"
@@ -27,10 +29,17 @@ while read -r -a LINE; do
 		#echo "quitfile: ${LINE[1]}";
 		QUITFILE="${LINE[1]}";
 	fi;
+	if [ "${LINE[0]}" == "stopfile" ]; then
+		#echo "stopfile: ${LINE[1]}";
+		STOPFILE="${LINE[1]}";
+	fi;
 done < <(cat ReceiveSQLConfig)
 
 if [ -f ${QUITFILE} ]; then
 	rm ${QUITFILE}
+fi
+if [ -f ${STOPFILE} ]; then
+	rm ${STOPFILE}
 fi
 
 # run the middleman
@@ -42,7 +51,9 @@ while [ true ]; do
 	echo -n "middleman exited with code $? at "
 	date >> middleman_runs.log
 	sleep 1
-	if [ -f .${QUITFILE} ]; then
+	if [ -f ${QUITFILE} ]; then
+		touch ${STOPFILE}; # trigger the middleman to stop
+		rm $QUITFILE
 		break;
 	fi
 done

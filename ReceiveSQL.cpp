@@ -119,6 +119,10 @@ bool ReceiveSQL::Execute(){
 	Log("Tracking Stats",4);
 	if(!stats_period.is_negative()) get_ok = TrackStats();
 	
+	// Check for any commands from remote control port
+	Log("Checking Controls",4);
+	get_ok = UpdateControls();
+	
 	Log("Loop Iteration Done",5);
 }
 
@@ -607,7 +611,8 @@ bool ReceiveSQL::InitMessaging(Store& m_variables){
 	boost::posix_time::ptime now = boost::posix_time::microsec_clock::universal_time();
 	last_mm_receipt = now;
 	last_mm_send = now;
-	last_stats_calc = now;
+	std::time_t stdtime(0);
+	last_stats_calc = boost::posix_time::time_from_string("2002-01-20 23:59:59.000"); // some arbitrary old time
 	
 	return true;
 }
@@ -1557,17 +1562,17 @@ bool ReceiveSQL::TrackStats(){
 		
 		// to calculate rates we need to know the difference in number
 		// of reads/writes since last time. So get the last values
-		unsigned long last_write_query_count;
-		unsigned long last_read_query_count;
-		MonitoringStore.Get("write_queries_recvd", last_write_query_count);
-		MonitoringStore.Get("read_queries_recvd", last_read_query_count);
+		unsigned long last_write_query_count = write_queries_recvd;
+		unsigned long last_read_query_count = read_queries_recvd;
+		MonitoringStore.Get("write_queries_recvd", write_queries_recvd);
+		MonitoringStore.Get("read_queries_recvd", read_queries_recvd);
 		
 		// calculate rates are per minute
 		elapsed_time = boost::posix_time::microsec_clock::universal_time() - last_stats_calc;
 		float read_query_rate =
-		    ((last_read_query_count - read_queries_recvd) * 60.) / elapsed_time.total_seconds();
+		    ((read_queries_recvd - last_read_query_count) * 60.) / elapsed_time.total_seconds();
 		float write_query_rate =
-		    ((last_write_query_count - write_queries_recvd) * 60.) / elapsed_time.total_seconds();
+		    ((write_queries_recvd - last_write_query_count) * 60.) / elapsed_time.total_seconds();
 		
 		// dump all stats into a Store.
 		MonitoringStore.Set("write_queries_recvd", write_queries_recvd);
@@ -1610,7 +1615,15 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore >> json_stats;
 		
 		// update the web page status
-		SC_vars["Status"]->SetValue(json_stats);
+		// actually, this only supports a single word, with no spaces?
+		std::stringstream status;
+		status << "  r:["<<read_queries_recvd<<"|"<<read_query_recv_fails<<"|"<<read_queries_failed
+		       <<"], w:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
+		       <<"], l:["<<log_msgs_recvd<<"|"<<log_msg_recv_fails<<in_logs_failed
+		       <<"], a:["<<acks_sent<<"|"<<ack_send_fails
+		       <<"], d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_logs_in<<"|"<<dropped_acks
+		       <<"]";
+		SC_vars["Status"]->SetValue(status.str());
 		
 		// temporarily bypass the database logging level to ensure it gets sent to the monitoring db.
 		int db_verbosity_tmp = db_verbosity;
@@ -2279,14 +2292,26 @@ bool ReceiveSQL::LogToDb(LogMsg logmsg){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::DoStop(bool stop){
-	std::string cmd = "touch "+stopfile;
-	if(stop) std::system(cmd.c_str());
+	if(stop){
+		// make stop flag file which will trigger finalise and termination
+		std::string cmd = "touch "+stopfile;
+		std::system(cmd.c_str());
+		SC_vars["Stop"]->SetValue(false);
+		SC_vars["Status"]->SetValue("Stopping");
+	}
 	return true;
 }
 
 bool ReceiveSQL::DoQuit(bool quit){
-	std::string cmd = "touch "+quitfile;
-	if(quit) std::system(cmd.c_str());
+	if(quit){
+		// make stop flag file to stop this executable
+		DoStop(true);
+		// make quit flag file to prevent run_middleman.sh re-starting us
+		std::string cmd = "touch "+quitfile;
+		std::system(cmd.c_str());
+		SC_vars["Quit"]->SetValue(false);
+		SC_vars["Status"]->SetValue("Quitting");
+	}
 	return true;
 }
 
