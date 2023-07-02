@@ -7,6 +7,8 @@
 // for finding clients
 #include "ServiceDiscovery.h"
 #include "Utilities.h"
+// for slow control over zmq SD port
+#include "SlowControlCollection.h"
 // for databse interaction
 #include "Postgres.h"
 #include <pqxx/pqxx>
@@ -34,6 +36,7 @@ class ReceiveSQL{
 	bool InitZMQ(Store& m_variables);
 	bool InitMessaging(Store& m_variables);
 	bool InitServiceDiscovery(Store& m_variables);
+	bool InitControls(Store& m_variables);
 	
 	bool Execute();
 	bool FindNewClients();
@@ -53,6 +56,9 @@ class ReceiveSQL{
 	bool TrimQueue(std::string queuename);
 	bool TrimDequeue(std::string queuename);
 	bool TrimCache();
+	bool UpdateControls();
+	bool DoStop(bool stop);
+	bool DoQuit(bool quit);
 	bool TrackStats();
 	
 	bool Finalise();
@@ -76,6 +82,10 @@ class ReceiveSQL{
 	private:
 	// an instance of the postgres interface class to communicate with the database(s)
 	Postgres m_database;
+	
+	SlowControlCollection SC_vars;
+	std::string stopfile="stop";
+	std::string quitfile="quit";
 	
 	int stdio_verbosity;
 	int db_verbosity;

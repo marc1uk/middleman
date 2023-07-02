@@ -1,7 +1,8 @@
 # application will loop until this file is found
 stopfile stop
+quitfile quit
 # identity of the middleman, used for logging
-zmq_identity middleman
+zmq_identity middleman_1
 #hostname localhost
 #hostaddr 127.0.0.1
 port 5432
@@ -13,6 +14,7 @@ clt_sub_port 77778
 clt_rtr_port 77777
 mm_snd_port 777797
 log_pub_port 24010
+remote_control_port 24011
 
 # all timeouts in ms
 clt_sub_socket_timeout 500
