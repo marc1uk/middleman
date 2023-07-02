@@ -1618,10 +1618,10 @@ bool ReceiveSQL::TrackStats(){
 		// actually, this only supports a single word, with no spaces?
 		std::stringstream status;
 		status << "  r:["<<read_queries_recvd<<"|"<<read_query_recv_fails<<"|"<<read_queries_failed
-		       <<"], w:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
-		       <<"], l:["<<log_msgs_recvd<<"|"<<log_msg_recv_fails<<in_logs_failed
-		       <<"], a:["<<acks_sent<<"|"<<ack_send_fails
-		       <<"], d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_logs_in<<"|"<<dropped_acks
+		       <<"]; w:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
+		       <<"]; l:["<<log_msgs_recvd<<"|"<<log_msg_recv_fails<<in_logs_failed
+		       <<"]; a:["<<acks_sent<<"|"<<ack_send_fails
+		       <<"]; d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_logs_in<<"|"<<dropped_acks
 		       <<"]";
 		SC_vars["Status"]->SetValue(status.str());
 		
