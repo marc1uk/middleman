@@ -519,8 +519,8 @@ bool ReceiveSQL::InitControls(Store& m_variables){
 	// - an indexed list of possible value for OPTIONS or COMMANDS, (key: option num (arbitrary), value: option name)
 	
 	// add the set of controls we support
-	SC_vars.Add("Stop",SlowControlElementType(BUTTON));
-	SC_vars["Stop"]->SetValue(false);
+	SC_vars.Add("Restart",SlowControlElementType(BUTTON));
+	SC_vars["Restart"]->SetValue(false);
 	
 	SC_vars.Add("Quit",SlowControlElementType(BUTTON));
 	SC_vars["Quit"]->SetValue(false);
@@ -1541,7 +1541,7 @@ bool ReceiveSQL::UpdateControls(){
 	// we need to check all the registered controls for updates
 	// (this is expected to change when we can register callbacks, so we'll implement with that in mind)
 	bool stop=false;
-	SC_vars["Stop"]->GetValue(stop);
+	SC_vars["Restart"]->GetValue(stop);
 	if(stop) DoStop(stop);
 	
 	bool quit=false;
@@ -2296,7 +2296,7 @@ bool ReceiveSQL::DoStop(bool stop){
 		// make stop flag file which will trigger finalise and termination
 		std::string cmd = "touch "+stopfile;
 		std::system(cmd.c_str());
-		SC_vars["Stop"]->SetValue(false);
+		SC_vars["Restart"]->SetValue(false);
 		SC_vars["Status"]->SetValue("Stopping");
 	}
 	return true;
