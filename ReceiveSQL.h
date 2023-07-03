@@ -217,8 +217,8 @@ class ReceiveSQL{
 	unsigned long in_logs_failed = 0;
 	
 	// number of messages sent over zmq sockets, and how many failed.
-	unsigned long acks_sent = 0;
-	unsigned long ack_send_fails = 0;
+	unsigned long reps_sent = 0;
+	unsigned long rep_send_fails = 0;
 	unsigned long log_msgs_sent = 0;
 	unsigned long log_send_fails = 0;
 	unsigned long mm_broadcasts_sent = 0;

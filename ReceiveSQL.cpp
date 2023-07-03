@@ -1290,14 +1290,14 @@ bool ReceiveSQL::SendNextReply(){
 				cache.emplace(resp_queue.begin()->first,qrycpy);
 				// remove from the to-send queue
 				resp_queue.erase(resp_queue.begin()->first);
-				++acks_sent;
+				++reps_sent;
 				
 			} else {
 				Log("Error sending acknowledgement message!",1);
 				if(next_msg.retries>=max_send_attempts){
 					// give up
 					resp_queue.erase(resp_queue.begin()->first);
-					++ack_send_fails;
+					++rep_send_fails;
 					return false;
 				} else {
 					++next_msg.retries;
@@ -1562,10 +1562,10 @@ bool ReceiveSQL::TrackStats(){
 		
 		// to calculate rates we need to know the difference in number
 		// of reads/writes since last time. So get the last values
-		unsigned long last_write_query_count = write_queries_recvd;
-		unsigned long last_read_query_count = read_queries_recvd;
-		MonitoringStore.Get("write_queries_recvd", write_queries_recvd);
-		MonitoringStore.Get("read_queries_recvd", read_queries_recvd);
+		unsigned long last_write_query_count;
+		unsigned long last_read_query_count;
+		MonitoringStore.Get("write_queries_recvd", last_write_query_count);
+		MonitoringStore.Get("read_queries_recvd", last_read_query_count);
 		
 		// calculate rates are per minute
 		elapsed_time = boost::posix_time::microsec_clock::universal_time() - last_stats_calc;
@@ -1586,8 +1586,8 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("write_queries_failed", write_queries_failed);
 		MonitoringStore.Set("read_queries_failed", read_queries_failed);
 		MonitoringStore.Set("in_logs_failed", in_logs_failed);
-		MonitoringStore.Set("acks_sent", acks_sent);
-		MonitoringStore.Set("ack_send_fails", ack_send_fails);
+		MonitoringStore.Set("reps_sent", reps_sent);
+		MonitoringStore.Set("rep_send_fails", rep_send_fails);
 		MonitoringStore.Set("log_msgs_sent", log_msgs_sent);
 		MonitoringStore.Set("log_send_fails", log_send_fails);
 		MonitoringStore.Set("mm_broadcasts_sent", mm_broadcasts_sent);
@@ -1619,8 +1619,8 @@ bool ReceiveSQL::TrackStats(){
 		std::stringstream status;
 		status << "  r:["<<read_queries_recvd<<"|"<<read_query_recv_fails<<"|"<<read_queries_failed
 		       <<"]; w:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
-		       <<"]; l:["<<log_msgs_recvd<<"|"<<log_msg_recv_fails<<in_logs_failed
-		       <<"]; a:["<<acks_sent<<"|"<<ack_send_fails
+		       <<"]; l:["<<log_msgs_recvd<<"|"<<log_msg_recv_fails<<"|"<<in_logs_failed
+		       <<"]; a:["<<reps_sent<<"|"<<rep_send_fails
 		       <<"]; d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_logs_in<<"|"<<dropped_acks
 		       <<"]";
 		SC_vars["Status"]->SetValue(status.str());

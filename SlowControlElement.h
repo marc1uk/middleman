@@ -82,23 +82,38 @@ class SlowControlElement{
     return true;
   }
 
+
+  bool SetValue(std::string value){
+    mtx.lock();
+    *(options["value"])= value;
+    mtx.unlock();
+    return true;
+  }
+  
   template<typename T> T GetValue(){
-    
     T tmp;
     mtx.lock();
     options.Get("value", tmp);
     mtx.unlock();
     return tmp;
-
+    
   }
   
   template<typename T> bool GetValue(T &value){
     mtx.lock();
-    options.Get("value", value);
+    bool ret=options.Get("value", value);
+    mtx.unlock();
+    return ret;
+  }
+
+  bool GetValue(std::string &value){
+    mtx.lock();
+    if(!options.Has("value")) return false;
+    value=*(options["value"]);
     mtx.unlock();
     return true;
-  }
-  
+  } 
+
  private:
 
   std::string m_name;
