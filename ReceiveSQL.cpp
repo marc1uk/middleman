@@ -19,8 +19,9 @@ bool ReceiveSQL::Initialise(std::string configfile){
 	Store m_variables;
 	Log("Reading config",3);
 	m_variables.Initialise(configfile);
-	my_id = "middleman";
-	m_variables.Get("zmq_identity",my_id);
+	std::string zmq_id = "1";
+	m_variables.Get("zmq_identity",zmq_id);
+	my_id = "middleman_" + zmq_id;
 	
 	// needs to be done first (or at least before InitZMQ)
 	Log("Initialising Messaging Queues",3);
@@ -446,14 +447,11 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	int remote_control_port = 24011;
 	m_variables.Get("remote_control_port",remote_control_port);
 	
-	// A service name. The Utilities class has a helper function that will connect
-	// a given zmq socket to all broadcasters with a given service name.
-	// The name given in the ServiceDiscovery constructor is used for the RemoteControl
-	// service (which we are not yet using, so N/A for now).
-	std::string client_name = "Middleman";
-	service_discovery_configstore.Get("client_name",client_name);
-	
-	// a unique identifier for us. this is used by the ServiceDiscovery listener thread,
+	// The Utilities class has a helper function that will connect a given zmq socket
+	// to all broadcasters with a given service name.
+	// The name given in the ServiceDiscovery constructor is used for the RemoteControl service;
+	// for this we use our unique id (my_id). We also need to provide a unique identifier
+	// used by the ServiceDiscovery listener thread,
 	// which maintains a map of services it's recently heard about, for which this is the key.
 	boost::uuids::uuid client_id = boost::uuids::random_generator()();
 	
@@ -466,7 +464,7 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	// construct the ServiceDiscovery instance.
 	service_discovery = new ServiceDiscovery(send_broadcasts, rcv_broadcasts, remote_control_port,
 	                        broadcast_address, broadcast_port, context, client_id,
-	                        client_name, broadcast_period_sec, kick_secs);
+	                        my_id, broadcast_period_sec, kick_secs);
 	// it'll handle discovery & broadcasting in a separate thread - we don't need to do anything else.
 	
 	// version that only listens, doesn't broadcast

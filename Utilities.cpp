@@ -164,7 +164,7 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
       std::string tmp;
       bool registered=false;
       
-      if(type!="Middleman_Control"){
+      if(type.substr(0,9)!="middleman"){
         // if this isn't a middleman, assume it's a service with a PGClient
         // try to connect to the standard PGClient ports
         

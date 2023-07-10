@@ -1,8 +1,9 @@
 # application will loop until this file is found
 stopfile stop
 quitfile quit
-# identity of the middleman, used for logging
-zmq_identity middleman_1
+# suffix for middleman identity, used for logging and remote control
+# should be unique, will be prepended with 'middleman_'.
+zmq_identity 1
 #hostname localhost
 #hostaddr 127.0.0.1
 port 5432
