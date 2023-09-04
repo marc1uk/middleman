@@ -272,8 +272,8 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	
 	// specify the ports everything talks on. All listeners connect to the remote port
 	// which is picked up by ServiceDiscovery
-	mm_snd_port =  77797;       // for sending middleman beacons
-	log_pub_port = 77776;       // for sending logging messages to the master
+	mm_snd_port =  55596;       // for sending middleman beacons
+	log_pub_port = 55554;       // for sending logging messages to the master
 	// socket timeouts, so nothing blocks indefinitely
 	clt_sub_socket_timeout=500;
 	int clt_rtr_socket_timeout=500; // used for both sends and receives

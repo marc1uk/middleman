@@ -6,13 +6,13 @@ port 5432
 user tooldaq
 passwd tooldaq19
 #context_io_threads 1
-clt_sub_port 77778
-#clt_dlr_port 77779
-clt_rtr_port 77777
-mm_rcv_port 777798
-mm_snd_port 777797
-log_pub_port 77776
-log_sub_port 77775
+clt_sub_port 55556
+#clt_dlr_port 55557
+clt_rtr_port 55555
+mm_rcv_port 55597
+mm_snd_port 55596
+log_pub_port 55554
+log_sub_port 55553
 
 # all timeouts in ms
 clt_sub_socket_timeout 500
