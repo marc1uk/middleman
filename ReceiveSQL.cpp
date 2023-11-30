@@ -125,6 +125,7 @@ bool ReceiveSQL::Execute(){
 	get_ok = UpdateControls();
 	
 	Log("Loop Iteration Done",5);
+	return true;
 }
 
 bool ReceiveSQL::Finalise(){
@@ -1136,6 +1137,7 @@ bool ReceiveSQL::CheckMasterStatus(){
 		Log(Concat("warning: ",elapsed_time.seconds()," seconds since last master check-in"),1);
 		
 	} // else other middleman has checked in, or i'm master
+	return true;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -1658,7 +1660,7 @@ bool ReceiveSQL::NegotiateMaster(std::string their_header, std::string their_tim
 		// they did
 		get_ok = NegotiationReply(their_header, their_timestamp);
 	}
-	
+	return get_ok;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
