@@ -2111,7 +2111,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, zmq::message_t& message){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
+bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, const std::string& messagedata){
 	// form the zmq::message_t
 	zmq::message_t message(messagedata.size());
 	memcpy(message.data(), messagedata.data(), messagedata.size());
@@ -2127,7 +2127,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> messages){
+bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, const std::vector<std::string>& messages){
 	
 	// loop over all but the last part in the input vector,
 	// and send with the SNDMORE flag

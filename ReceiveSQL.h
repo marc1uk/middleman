@@ -273,12 +273,13 @@ class ReceiveSQL{
 	// 1. case where we're given a zmq::message_t -> just send it
 	bool Send(zmq::socket_t* sock, bool more, zmq::message_t& message);
 	// 2. case where we're given a std::string -> specialise accessing underlying data
-	bool Send(zmq::socket_t* sock, bool more, std::string messagedata);
+	bool Send(zmq::socket_t* sock, bool more, const std::string& messagedata);
 	// 3. case where we're given a vector of strings
-	bool Send(zmq::socket_t* sock, bool more, std::vector<std::string> messages);
-	// 4. generic case for other primitive types -> relies on &messagedata and sizeof(T) being suitable.
+	bool Send(zmq::socket_t* sock, bool more, const std::vector<std::string>& messages);
+	// 4. generic case for other primitive types
 	template <typename T>
-	bool Send(zmq::socket_t* sock, bool more, T&& messagedata){
+	typename std::enable_if<std::is_fundamental<T>::value, bool>::type
+	Send(zmq::socket_t* sock, bool more, T messagedata){
 		zmq::message_t message(sizeof(T));
 		memcpy(message.data(), &messagedata, sizeof(T));
 		bool send_ok;
@@ -288,11 +289,11 @@ class ReceiveSQL{
 	}
 	
 	// recursive case; send the next message part and forward all remaining parts
-	template <typename T, typename... Rest>
-	bool Send(zmq::socket_t* sock, bool more, T&& message, Rest&&... rest){
-		bool send_ok = Send(sock, true, std::forward<T>(message));
+	template <typename T1, typename T2, typename... Rest>
+	bool Send(zmq::socket_t* sock, bool more, T1&& msg1, T2&& msg2, Rest&&... rest) {
+		bool send_ok = Send(sock, true, std::forward<T1>(msg1));
 		if(not send_ok) return false;
-		return Send(sock, false, std::forward<Rest>(rest)...);
+		return Send(sock, more, msg2, std::forward<Rest>(rest)...);
 	}
 	
 	// wrapper to do polling if required
