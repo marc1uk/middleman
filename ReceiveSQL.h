@@ -31,7 +31,7 @@ class ReceiveSQL{
 	ReceiveSQL(){};
 	~ReceiveSQL(){};
 	
-	bool Initialise(std::string configfile);
+	bool Initialise(const std::string& configfile);
 	bool InitPostgres(Store& m_variables);
 	bool InitZMQ(Store& m_variables);
 	bool InitMessaging(Store& m_variables);
@@ -53,8 +53,8 @@ class ReceiveSQL{
 	bool SendNextLogMsg();
 	bool BroadcastPresence();
 	bool CleanupCache();
-	bool TrimQueue(std::string queuename);
-	bool TrimDequeue(std::string queuename);
+	bool TrimQueue(const std::string& queuename);
+	bool TrimDequeue(const std::string& queuename);
 	bool TrimCache();
 	bool UpdateControls();
 	bool DoStop(bool stop);
@@ -63,11 +63,11 @@ class ReceiveSQL{
 	
 	bool Finalise();
 	
-	bool NegotiateMaster(std::string their_header="", std::string their_timestamp="");
+	bool NegotiateMaster(const std::string& their_header="", const std::string& their_timestamp="");
 	bool NegotiationRequest();
-	bool NegotiationReply(std::string their_header, std::string their_timestamp);
+	bool NegotiationReply(const std::string& their_header, const std::string& their_timestamp);
 	bool UpdateRole();
-	boost::posix_time::ptime ToTimestamp(std::string timestring);
+	boost::posix_time::ptime ToTimestamp(const std::string& timestring);
 	std::string ToTimestring(boost::posix_time::ptime);
 	bool GetLastUpdateTime(std::string& our_timestamp);
 	

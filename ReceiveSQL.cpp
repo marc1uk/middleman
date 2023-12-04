@@ -15,7 +15,7 @@
 //                        Main Program Parts
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
-bool ReceiveSQL::Initialise(std::string configfile){
+bool ReceiveSQL::Initialise(const std::string& configfile){
 	Store m_variables;
 	Log("Reading config",3);
 	m_variables.Initialise(configfile);
@@ -1422,7 +1422,7 @@ bool ReceiveSQL::CleanupCache(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TrimQueue(std::string queuename){
+bool ReceiveSQL::TrimQueue(const std::string& queuename){
 	
 	// check acknowledge queue size and do the same
 	std::map<std::pair<std::string, uint32_t>, Query>* queue;
@@ -1464,7 +1464,7 @@ bool ReceiveSQL::TrimQueue(std::string queuename){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TrimDequeue(std::string queuename){
+bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 	
 	// check in or out log message queue size and do the same
 	std::deque<LogMsg>* queue;
@@ -1641,7 +1641,7 @@ bool ReceiveSQL::TrackStats(){
 //                        Support Routines
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
-bool ReceiveSQL::NegotiateMaster(std::string their_header, std::string their_timestamp){
+bool ReceiveSQL::NegotiateMaster(const std::string& their_header, const std::string& their_timestamp){
 	
 	// we need to establish who's the master.
 	// The master will be decided based on who has the most recently modified datbase.
@@ -1845,7 +1845,7 @@ bool ReceiveSQL::NegotiationRequest(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::NegotiationReply(std::string their_header, std::string their_timestamp){
+bool ReceiveSQL::NegotiationReply(const std::string& their_header, const std::string& their_timestamp){
 	
 	// other side of negotiations. This is simpler since we already have the other middleman's
 	// timestamp, so all we need to do is deduce our new role and send the response.
@@ -2018,7 +2018,7 @@ bool ReceiveSQL::UpdateRole(){
 
 // to compare timestamp strings returned from "pg_last_committed_xact"
 // we need to turn the string into a proper comparable boost::posix_time::ptime.
-boost::posix_time::ptime ReceiveSQL::ToTimestamp(std::string timestring){
+boost::posix_time::ptime ReceiveSQL::ToTimestamp(const std::string& timestring){
 	
 	// convert postgres timestamp string to a timestamp we can compare
 	// postgres timestamps are in the format "2015-10-02 11:16:34.678267+01"
