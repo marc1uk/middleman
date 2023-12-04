@@ -2224,7 +2224,7 @@ bool ReceiveSQL::Receive(zmq::socket_t* sock, std::vector<zmq::message_t>& outpu
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Log(std::string message, uint32_t message_severity){
+bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 	
 	// log locally, if within printout verbosity
 	if(message_severity < stdio_verbosity){
@@ -2258,7 +2258,7 @@ bool ReceiveSQL::Log(std::string message, uint32_t message_severity){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::LogToDb(LogMsg logmsg){
+bool ReceiveSQL::LogToDb(const LogMsg& logmsg){
 	
 	// log a message to the local monitoring database
 	

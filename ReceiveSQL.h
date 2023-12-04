@@ -72,8 +72,8 @@ class ReceiveSQL{
 	bool GetLastUpdateTime(std::string& our_timestamp);
 	
 	// Logging functions
-	bool Log(std::string message, uint32_t message_severity);
-	bool LogToDb(LogMsg logmsg);
+	bool Log(const std::string& message, uint32_t message_severity);
+	bool LogToDb(const LogMsg& logmsg);
 	
 	// generic receive functions
 	int PollAndReceive(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, std::vector<zmq::message_t>& outputs);
@@ -338,19 +338,19 @@ class ReceiveSQL{
 	
 	// handy helper function for building strings for log messages
 	template <typename T>
-	void AddPart(std::stringstream& message, T& next_part){
+	void AddPart(std::stringstream& message, const T& next_part){
 		message << next_part;
 		return;
 	}
 	
 	template <typename T, typename... Rest>
-	void AddPart(std::stringstream& message, T& next_part, Rest... rest){
+	void AddPart(std::stringstream& message, const T& next_part, Rest... rest){
 		message << next_part;
 		return AddPart(message, rest...);
 	}
 	
 	template <typename... Ts>
-	std::string Concat(Ts... args){
+	std::string Concat(const Ts&... args){
 		std::stringstream tmp;
 		AddPart(tmp, args...);
 		return tmp.str();
