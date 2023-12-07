@@ -172,7 +172,7 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
           registered=true;
           // read queries and responses
           type = "psql_read";
-          store_port=std::to_string(read_port_num); // "77777";
+          store_port=std::to_string(read_port_num); // "55555";
           service->Set("msg_value",type);
           service->Set("remote_port",store_port);
           readrep_conns[ip]=service;
@@ -185,7 +185,7 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
           if(write_sock){
             // write queries
             type = "psql_write";
-            store_port=std::to_string(write_port_num); // "77778";
+            store_port=std::to_string(write_port_num); // "55556";
             service->Set("msg_value",type);
             service->Set("remote_port",store_port);
             write_conns[ip]=service;
@@ -202,7 +202,7 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
           if(log_sock){
             // logging messages
             type = "logging";
-            store_port=std::to_string(log_port_num); // "77775";
+            store_port=std::to_string(log_port_num); // "55554";
             service->Set("msg_value",type);
             service->Set("remote_port",store_port);
             log_conns[ip]=service;

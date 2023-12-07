@@ -11,10 +11,10 @@ dbname daq
 #user tooldaq
 #passwd tooldaq19
 #context_io_threads 1
-clt_sub_port 77778
-clt_rtr_port 77777
-mm_snd_port 777797
-log_pub_port 24010
+clt_sub_port 55556
+clt_rtr_port 55555
+mm_snd_port 55597
+log_pub_port 55554
 remote_control_port 24011
 
 # all timeouts in ms
