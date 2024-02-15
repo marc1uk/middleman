@@ -15,7 +15,7 @@
 //                        Main Program Parts
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
-bool ReceiveSQL::Initialise(std::string configfile){
+bool ReceiveSQL::Initialise(const std::string& configfile){
 	Store m_variables;
 	Log("Reading config",3);
 	m_variables.Initialise(configfile);
@@ -125,6 +125,7 @@ bool ReceiveSQL::Execute(){
 	get_ok = UpdateControls();
 	
 	Log("Loop Iteration Done",5);
+	return true;
 }
 
 bool ReceiveSQL::Finalise(){
@@ -261,13 +262,13 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// is the master. They won't require a reply.
 	
 	// specify the ports everything talks on
-	mm_snd_port =  77797;         // for sending middleman beacons
+	mm_snd_port =  55597;         // for sending middleman beacons
 	log_pub_port = 24101;         // for sending logging messages to the master
 	// listeners connect to whatever remote port is picked up by ServiceDiscovery, so normally
 	// the middleman doesn't need to know what ports to listen on, only those it sends on.
 	// But we're now doing away with advertising all ports, and connecting to invisible endpoints.
-	clt_rtr_port = 77777;         // for client routers sending reads
-	clt_sub_port = 77778;         // for client pubbers sending writes.
+	clt_rtr_port = 55555;         // for client routers sending reads
+	clt_sub_port = 55556;         // for client pubbers sending writes.
 	
 	// socket timeouts, so nothing blocks indefinitely
 	clt_sub_socket_timeout=500;
@@ -1136,6 +1137,7 @@ bool ReceiveSQL::CheckMasterStatus(){
 		Log(Concat("warning: ",elapsed_time.seconds()," seconds since last master check-in"),1);
 		
 	} // else other middleman has checked in, or i'm master
+	return true;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -1420,7 +1422,7 @@ bool ReceiveSQL::CleanupCache(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TrimQueue(std::string queuename){
+bool ReceiveSQL::TrimQueue(const std::string& queuename){
 	
 	// check acknowledge queue size and do the same
 	std::map<std::pair<std::string, uint32_t>, Query>* queue;
@@ -1462,7 +1464,7 @@ bool ReceiveSQL::TrimQueue(std::string queuename){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TrimDequeue(std::string queuename){
+bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 	
 	// check in or out log message queue size and do the same
 	std::deque<LogMsg>* queue;
@@ -1639,7 +1641,7 @@ bool ReceiveSQL::TrackStats(){
 //                        Support Routines
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
-bool ReceiveSQL::NegotiateMaster(std::string their_header, std::string their_timestamp){
+bool ReceiveSQL::NegotiateMaster(const std::string& their_header, const std::string& their_timestamp){
 	
 	// we need to establish who's the master.
 	// The master will be decided based on who has the most recently modified datbase.
@@ -1658,7 +1660,7 @@ bool ReceiveSQL::NegotiateMaster(std::string their_header, std::string their_tim
 		// they did
 		get_ok = NegotiationReply(their_header, their_timestamp);
 	}
-	
+	return get_ok;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -1843,7 +1845,7 @@ bool ReceiveSQL::NegotiationRequest(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::NegotiationReply(std::string their_header, std::string their_timestamp){
+bool ReceiveSQL::NegotiationReply(const std::string& their_header, const std::string& their_timestamp){
 	
 	// other side of negotiations. This is simpler since we already have the other middleman's
 	// timestamp, so all we need to do is deduce our new role and send the response.
@@ -2016,7 +2018,7 @@ bool ReceiveSQL::UpdateRole(){
 
 // to compare timestamp strings returned from "pg_last_committed_xact"
 // we need to turn the string into a proper comparable boost::posix_time::ptime.
-boost::posix_time::ptime ReceiveSQL::ToTimestamp(std::string timestring){
+boost::posix_time::ptime ReceiveSQL::ToTimestamp(const std::string& timestring){
 	
 	// convert postgres timestamp string to a timestamp we can compare
 	// postgres timestamps are in the format "2015-10-02 11:16:34.678267+01"
@@ -2109,7 +2111,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, zmq::message_t& message){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
+bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, const std::string& messagedata){
 	// form the zmq::message_t
 	zmq::message_t message(messagedata.size());
 	memcpy(message.data(), messagedata.data(), messagedata.size());
@@ -2125,7 +2127,7 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::string messagedata){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, std::vector<std::string> messages){
+bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, const std::vector<std::string>& messages){
 	
 	// loop over all but the last part in the input vector,
 	// and send with the SNDMORE flag
@@ -2222,7 +2224,7 @@ bool ReceiveSQL::Receive(zmq::socket_t* sock, std::vector<zmq::message_t>& outpu
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::Log(std::string message, uint32_t message_severity){
+bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 	
 	// log locally, if within printout verbosity
 	if(message_severity < stdio_verbosity){
@@ -2256,7 +2258,7 @@ bool ReceiveSQL::Log(std::string message, uint32_t message_severity){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::LogToDb(LogMsg logmsg){
+bool ReceiveSQL::LogToDb(const LogMsg& logmsg){
 	
 	// log a message to the local monitoring database
 	

@@ -31,7 +31,7 @@ class ReceiveSQL{
 	ReceiveSQL(){};
 	~ReceiveSQL(){};
 	
-	bool Initialise(std::string configfile);
+	bool Initialise(const std::string& configfile);
 	bool InitPostgres(Store& m_variables);
 	bool InitZMQ(Store& m_variables);
 	bool InitMessaging(Store& m_variables);
@@ -53,8 +53,8 @@ class ReceiveSQL{
 	bool SendNextLogMsg();
 	bool BroadcastPresence();
 	bool CleanupCache();
-	bool TrimQueue(std::string queuename);
-	bool TrimDequeue(std::string queuename);
+	bool TrimQueue(const std::string& queuename);
+	bool TrimDequeue(const std::string& queuename);
 	bool TrimCache();
 	bool UpdateControls();
 	bool DoStop(bool stop);
@@ -63,17 +63,17 @@ class ReceiveSQL{
 	
 	bool Finalise();
 	
-	bool NegotiateMaster(std::string their_header="", std::string their_timestamp="");
+	bool NegotiateMaster(const std::string& their_header="", const std::string& their_timestamp="");
 	bool NegotiationRequest();
-	bool NegotiationReply(std::string their_header, std::string their_timestamp);
+	bool NegotiationReply(const std::string& their_header, const std::string& their_timestamp);
 	bool UpdateRole();
-	boost::posix_time::ptime ToTimestamp(std::string timestring);
+	boost::posix_time::ptime ToTimestamp(const std::string& timestring);
 	std::string ToTimestring(boost::posix_time::ptime);
 	bool GetLastUpdateTime(std::string& our_timestamp);
 	
 	// Logging functions
-	bool Log(std::string message, uint32_t message_severity);
-	bool LogToDb(LogMsg logmsg);
+	bool Log(const std::string& message, uint32_t message_severity);
+	bool LogToDb(const LogMsg& logmsg);
 	
 	// generic receive functions
 	int PollAndReceive(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, std::vector<zmq::message_t>& outputs);
@@ -273,12 +273,13 @@ class ReceiveSQL{
 	// 1. case where we're given a zmq::message_t -> just send it
 	bool Send(zmq::socket_t* sock, bool more, zmq::message_t& message);
 	// 2. case where we're given a std::string -> specialise accessing underlying data
-	bool Send(zmq::socket_t* sock, bool more, std::string messagedata);
+	bool Send(zmq::socket_t* sock, bool more, const std::string& messagedata);
 	// 3. case where we're given a vector of strings
-	bool Send(zmq::socket_t* sock, bool more, std::vector<std::string> messages);
-	// 4. generic case for other primitive types -> relies on &messagedata and sizeof(T) being suitable.
+	bool Send(zmq::socket_t* sock, bool more, const std::vector<std::string>& messages);
+	// 4. generic case for other primitive types
 	template <typename T>
-	bool Send(zmq::socket_t* sock, bool more, T&& messagedata){
+	typename std::enable_if<std::is_fundamental<T>::value, bool>::type
+	Send(zmq::socket_t* sock, bool more, T messagedata){
 		zmq::message_t message(sizeof(T));
 		memcpy(message.data(), &messagedata, sizeof(T));
 		bool send_ok;
@@ -288,11 +289,11 @@ class ReceiveSQL{
 	}
 	
 	// recursive case; send the next message part and forward all remaining parts
-	template <typename T, typename... Rest>
-	bool Send(zmq::socket_t* sock, bool more, T&& message, Rest&&... rest){
-		bool send_ok = Send(sock, true, std::forward<T>(message));
+	template <typename T1, typename T2, typename... Rest>
+	bool Send(zmq::socket_t* sock, bool more, T1&& msg1, T2&& msg2, Rest&&... rest) {
+		bool send_ok = Send(sock, true, std::forward<T1>(msg1));
 		if(not send_ok) return false;
-		return Send(sock, false, std::forward<Rest>(rest)...);
+		return Send(sock, more, msg2, std::forward<Rest>(rest)...);
 	}
 	
 	// wrapper to do polling if required
@@ -337,19 +338,19 @@ class ReceiveSQL{
 	
 	// handy helper function for building strings for log messages
 	template <typename T>
-	void AddPart(std::stringstream& message, T& next_part){
+	void AddPart(std::stringstream& message, const T& next_part){
 		message << next_part;
 		return;
 	}
 	
 	template <typename T, typename... Rest>
-	void AddPart(std::stringstream& message, T& next_part, Rest... rest){
+	void AddPart(std::stringstream& message, const T& next_part, Rest... rest){
 		message << next_part;
 		return AddPart(message, rest...);
 	}
 	
 	template <typename... Ts>
-	std::string Concat(Ts... args){
+	std::string Concat(const Ts&... args){
 		std::stringstream tmp;
 		AddPart(tmp, args...);
 		return tmp.str();
