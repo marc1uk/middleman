@@ -125,6 +125,7 @@ bool ReceiveSQL::Execute(){
 	if(!stats_period.is_negative()) get_ok = TrackStats();
 	
 	Log("Loop Iteration Done",5);
+	return true;
 }
 
 bool ReceiveSQL::Finalise(){
@@ -134,7 +135,7 @@ bool ReceiveSQL::Finalise(){
 	// remove our services from those advertised?
 	Log("Removing Discoverable Services",3);
 	if(utilities) utilities->RemoveService("middleman");
-
+	
 	Log("Deleting Utilities",3);
 	if(utilities){ delete utilities; utilities=nullptr; }
 	
@@ -343,9 +344,10 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	// ----------------------------------------------------
 	mm_rcv_socket = new zmq::socket_t(*context, ZMQ_SUB);
 	mm_rcv_socket->setsockopt(ZMQ_RCVTIMEO, mm_rcv_socket_timeout);
-	// this socket never receives, so a recieve timeout is irrelevant.
+	// this socket never sends, so a send timeout is irrelevant.
 	// don't linger too long, it looks like the program crashed.
 	mm_rcv_socket->setsockopt(ZMQ_LINGER, 10);
+	mm_rcv_socket->setsockopt(ZMQ_SUBSCRIBE,"",0);
 	// we'll connect this socket to clients with the utilities class
 	
 	// socket to broadcast our presence to the other middleman
@@ -430,7 +432,7 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	
 	// how frequently to broadcast - note that we send intermittent messages about our status
 	// over the mm_snd_port anyway, so the ServiceDiscovery is only used for the initial discovery.
-	// since we also use the mm_snd_port and mm_rcv_port for negotiation, we can't do without them,
+	// since we also use the mm_snd_sock and mm_rcv_sock for negotiation, we can't do without them,
 	// so it's probably not worth trying to move this functionality into the ServiceDiscovery class.
 	int broadcast_period_sec = 5;
 	service_discovery_configstore.Get("broadcast_period",broadcast_period_sec);
@@ -643,7 +645,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		// expected parts are:
 		// 1. ZMQ_IDENTITY of the sender client
 		// 2. a unique ID used by the sender to match acknowledgements to sent messages
-		// 3. a database name 
+		// 3. a database name
 		// 4. an SQL statement
 		
 		std::string client_str="-"; uint32_t msg_int=-1; std::string dbname="-";
@@ -714,7 +716,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			// we've already run and sent the response to this query, resend it.
 			resp_queue.emplace(key,cache.at(key));
 			cache.erase(key);
-		
+			
 		} else if(wrt_txn_queue.count(key)==0 && resp_queue.count(key)==0){
 			Log("New query, adding to write queue",10);
 			// we don't have it waiting either in to-run or to-respond queues.
@@ -741,7 +743,7 @@ bool ReceiveSQL::GetClientReadQueries(){
 	
 	// check if we had any read transactions dealt to us
 	if(in_polls.at(0).revents & ZMQ_POLLIN){
-		
+	
 		++read_queries_recvd;
 		// We do. receive the next query
 		std::vector<zmq::message_t> outputs;
@@ -813,15 +815,15 @@ bool ReceiveSQL::GetClientReadQueries(){
 			for(int i=0; i<qry_string.length(); ++i) uppercasequery.append(1,std::toupper(qry_string[i]));
 			
 			bool is_write_txn = (uppercasequery.find("INSERT")!=std::string::npos) ||
-								(uppercasequery.find("UPDATE")!=std::string::npos) ||
-								(uppercasequery.find("DELETE")!=std::string::npos) ||
-								(uppercasequery.find("INTO")!=std::string::npos);
+			                    (uppercasequery.find("UPDATE")!=std::string::npos) ||
+			                    (uppercasequery.find("DELETE")!=std::string::npos) ||
+			                    (uppercasequery.find("INTO")!=std::string::npos);
 			
 			if(not is_write_txn || (am_master && handle_unexpected_writes)){
 				// sanity check passed
 				Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
 				rd_txn_queue.emplace(key, msg);
-				
+			
 			} else {
 				// otherwise send a response saying this query should go via the PUB port
 				std::string err = "write transaction received by standby dealer socket";
@@ -829,7 +831,7 @@ bool ReceiveSQL::GetClientReadQueries(){
 				resp_queue.emplace(key, msg);
 				Log("Write transaction received on read transaction port",1);
 				return false;
-				
+			
 			}
 		} // else we've already got this message queued, ignore it.
 		
@@ -945,14 +947,14 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 			if(is_master && am_master){
 				Log("Both middleman are masters! ...",3);
 				need_to_negotiate = true;
-				
+			
 			} else if(!is_master && !am_master){
 				Log("Neither middlemen are masters! ...",3);
 				// avoid unnecessary negotiation if we're fixed to being standby.
 				// it's possible both are fixed to being standby
 				// if not, the other standby will open negotiation eventually
 				if(not dont_promote) need_to_negotiate = true;
-				
+			
 			} else {
 				if(need_to_negotiate){
 					Log("...Disregarding stale role collision",3);
@@ -974,7 +976,7 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 			if(their_header=="Negotiate"){
 				// it's a request to negotiate
 				need_to_negotiate = true;
-				
+			
 			} else if(their_header=="VerifyMaster" || their_header=="VerifyStandby"){
 				// These suggest negotiation completed.
 				if(need_to_negotiate){
@@ -1056,6 +1058,7 @@ bool ReceiveSQL::CheckMasterStatus(){
 		Log(Concat("warning: ",elapsed_time.seconds()," seconds since last master check-in"),1);
 		
 	} // else other middleman has checked in, or i'm master
+	return true;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -1143,7 +1146,7 @@ bool ReceiveSQL::RunNextLogMsg(){
 		
 		if(not get_ok){
 			std::cerr<<"LogToDb error!"<<std::endl;
-		
+			
 			// something went wrong. already logged.
 			if(next_msg.retries>=max_send_attempts){
 				// give up on it
@@ -1388,7 +1391,7 @@ bool ReceiveSQL::TrimQueue(std::string queuename){
 		Log(Concat("Warning! Number of waiting elements in ",queuename," (",queue->size(),
 		           ") is approaching drop limit (",drop_limit,")!",
 		           "Is the network down, or responding slowly?"),1);
-		
+	
 	}
 	
 	return true;
@@ -1418,7 +1421,7 @@ bool ReceiveSQL::TrimDequeue(std::string queuename){
 	if(queue->size() > drop_limit){
 		int to_drop = queue->size() - drop_limit;
 		Log(Concat("Warning! Number of waiting elements in queue ",queuename," (",queue->size(),
-		         ") is over limit (",drop_limit,")! Dropping ",to_drop," messages!"),0);
+		           ") is over limit (",drop_limit,")! Dropping ",to_drop," messages!"),0);
 		for(int i=0; i<to_drop; ++i){ queue->pop_front(); }
 		*drop_count += to_drop;
 		
@@ -1427,7 +1430,6 @@ bool ReceiveSQL::TrimDequeue(std::string queuename){
 		Log(Concat("Warning! Number of waiting elements in ",queuename," (",queue->size(),
 		           ") is approaching drop limit (",drop_limit,") !",
 		           "Is the network down, or responding slowly?"),1);
-		
 	}
 	
 	return true;
@@ -1564,7 +1566,7 @@ bool ReceiveSQL::NegotiateMaster(std::string their_header, std::string their_tim
 		// they did
 		get_ok = NegotiationReply(their_header, their_timestamp);
 	}
-	
+	return get_ok;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -1574,7 +1576,7 @@ bool ReceiveSQL::NegotiationRequest(){
 	std::string our_header="Negotiate";
 	std::string msg_type; // header of received response
 	bool was_master = am_master; // our role before negotiation
-	
+
 	// get the last update time of our database
 	std::string our_timestamp;
 	get_ok = GetLastUpdateTime(our_timestamp);
@@ -1930,7 +1932,7 @@ boost::posix_time::ptime ReceiveSQL::ToTimestamp(std::string timestring){
 	
 	// we can form the boost::ptime from this struct
 	return boost::posix_time::ptime_from_tm(mytm);
-
+	
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -1945,7 +1947,7 @@ std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
 	// where PPP is up to 6 fractional seconds, and TZ is an optional timezone
 	// (e.g. 'PST', 'Z' (i.e. UTC), or an offset from UTC '-8' for 8 hours ahead)
 	// (https://www.postgresql.org/docs/current/datatype-datetime.html#datatype-datetime-input)
-
+	
 	// FIXME how do we get this? do we need to add it?
 	
 	// we can form time strings of our desired format most easily using a time struct
@@ -1963,7 +1965,7 @@ std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
 	        mytm.tm_sec);
 	
 	return std::string(timestring);
-
+	
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»

@@ -82,6 +82,7 @@ class Postgres {
 		if(not success) return false; // query failed
 		
 		success = ExpandRow<sizeof...(Ts), Ts&&...>::expand(local_row, std::forward<Ts>(rets)...);
+		return success;
 	}
 	
 	////////
@@ -216,6 +217,7 @@ class Postgres {
 			}
 			break;   // if not explicitly 'continued', break.
 		} // end tries
+		return false;
 	}
 	// end helper function
 	////////
