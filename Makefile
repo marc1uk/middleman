@@ -10,7 +10,7 @@ ZMQInclude= -I $(Dependencies)/zeromq-4.0.7/include
 BoostLib= -L $(Dependencies)/boost_1_66_0/install/lib -lboost_date_time
 BoostInclude= -I $(Dependencies)/boost_1_66_0/install/include
 
-CXXFLAGS= -g -std=c++11 -fdiagnostics-color=always -Wno-attributes -O3
+CXXFLAGS= -g -fdiagnostics-color=always -Wno-attributes -O3
 
 all: middleman
 

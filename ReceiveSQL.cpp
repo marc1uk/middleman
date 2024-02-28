@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <cstring>
 #include <locale>    // toupper
+#include <thread>
+#include <chrono>
 
 // TODO: invoking pg_promote requires either superuser privileges, or explicit granting
 // of EXECUTE on the function pg_promote. We should grant this to the middleman,
@@ -56,7 +58,12 @@ bool ReceiveSQL::Execute(){
 	
 	// poll the input sockets for messages
 	Log("Polling input sockets",4);
-	get_ok = zmq::poll(in_polls.data(), in_polls.size(), inpoll_timeout);
+	try {
+		get_ok = zmq::poll(in_polls.data(), in_polls.size(), inpoll_timeout);
+	} catch (zmq::error_t& err){
+		std::cerr<<"ReceiveSQL::Execute input poller caught "<<err.what()<<std::endl;
+		get_ok = -1;
+	}
 	if(get_ok<0){
 		Log("Warning! ReceiveSQL error polling input sockets; have they closed?",0);
 	}
@@ -87,7 +94,12 @@ bool ReceiveSQL::Execute(){
 	
 	// poll the output sockets for listeners
 	Log("Polling output sockets",4);
-	get_ok = zmq::poll(out_polls.data(), out_polls.size(), outpoll_timeout);
+	try {
+		get_ok = zmq::poll(out_polls.data(), out_polls.size(), outpoll_timeout);
+	} catch (zmq::error_t& err){
+		std::cerr<<"ReceiveSQL::Execute output poller caught "<<err.what()<<std::endl;
+		get_ok = -1;
+	}
 	if(get_ok<0){
 		Log("Warning! ReceiveSQL error polling output sockets; have they closed?",0);
 	}
@@ -158,9 +170,6 @@ bool ReceiveSQL::Finalise(){
 	if(log_pub_socket){ delete log_pub_socket; log_pub_socket=nullptr; }
 	// delete zmq context
 	
-	Log("Deleting context",3);
-	if(context){ delete context; context=nullptr; }
-	
 	// clear all message queues
 	Log("Clearing message queues",3);
 	wrt_txn_queue.clear();
@@ -169,6 +178,9 @@ bool ReceiveSQL::Finalise(){
 	cache.clear();
 	in_log_queue.clear();
 	out_log_queue.clear();
+	
+	Log("Deleting context",3);
+	if(context){ delete context; context=nullptr; }
 	
 	Log("Done, returning",3);
 	return true;
@@ -694,6 +706,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 	
 	// see if we had any write requests from clients
 	if(in_polls.at(2).revents & ZMQ_POLLIN){
+		Log(">>> got a write query from client",4);
 		
 		++write_queries_recvd;
 		// we did. receive next message.
@@ -709,30 +722,40 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		
 		// received message format should be a 4-part message
 		// expected parts are:
+		// 0. publisher channel*
 		// 1. ZMQ_IDENTITY of the sender client
 		// 2. a unique ID used by the sender to match acknowledgements to sent messages
 		// 3. a database name
 		// 4. an SQL statement
 		
-		std::string client_str="-"; uint32_t msg_int=-1; std::string dbname="-";
+		// *we don't currently send a channel part, so cannot use the ZMQ_SUBSCRIBE feature.
+		// as a result, the corresponding message part is also missing
+		int o=1;
+		
+		std::string channel="-"; std::string client_str="-"; uint32_t msg_int=-1; std::string dbname="-";
 		std::string qry_string="-";
-		if(outputs.size()>0){
-			client_str.resize(outputs.at(0).size(),'\0');
-			memcpy((void*)client_str.data(),outputs.at(0).data(),outputs.at(0).size());
+		// y'know, we don't need to actually copy out things we're not using here
+		//if(outputs.size()>0){
+		//	channel.resize(outputs.at(0).size(),'\0');
+		//	memcpy((void*)channel.data(),outputs.at(0).data(),outputs.at(0).size());
+		//}
+		if(outputs.size()>1-o){
+			client_str.resize(outputs.at(1-o).size(),'\0');
+			memcpy((void*)client_str.data(),outputs.at(1-o).data(),outputs.at(1-o).size());
 		}
-		if(outputs.size()>1) msg_int = *reinterpret_cast<uint32_t*>(outputs.at(1).data());
-		if(outputs.size()>2){
-			dbname.resize(outputs.at(2).size(),'\0');
-			memcpy((void*)dbname.data(),outputs.at(2).data(),outputs.at(2).size());
-		}
-		//if(outputs.size()>3){
-		//	qry_string.resize(outputs.at(3).size(),'\0');
-		//	memcpy((void*)qry_string.data(),outputs.at(3).data(),outputs.at(3).size());
+		if(outputs.size()>2-o) msg_int = *reinterpret_cast<uint32_t*>(outputs.at(2-o).data());
+		//if(outputs.size()>3-o){
+		//	dbname.resize(outputs.at(3-o).size(),'\0');
+		//	memcpy((void*)dbname.data(),outputs.at(3-o).data(),outputs.at(3-o).size());
+		//}
+		//if(outputs.size()>4-o){
+		//	qry_string.resize(outputs.at(4-o).size(),'\0');
+		//	memcpy((void*)qry_string.data(),outputs.at(4-o).data(),outputs.at(4-o).size());
 		//}
 		
-		if(outputs.size()!=4){
+		if(outputs.size()!=5-o){
 			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
-			Log(Concat("client: '",client_str,"', msg_id: ",msg_int,", db: '",dbname,"'"),4);
+			Log(Concat("client: '",client_str,"', msg_id: ",msg_int),4);
 			
 			++write_query_recv_fails;
 			return false;
@@ -754,13 +777,13 @@ bool ReceiveSQL::GetClientWriteQueries(){
 		if(cache.count(key)){
 			std::cout<<"skipping write as we've done it already"<<std::endl;
 			/*
-			if(memcmp(outputs.at(0).data(),cache.at(key).client_id.data(),outputs.at(0).size())!=0){
+			if(memcmp(outputs.at(1-o).data(),cache.at(key).client_id.data(),outputs.at(1-o).size())!=0){
 				std::cout<<"client id messages are different"<<std::endl;
 				std::cout<<"old message had length "<<cache.at(key).client_id.size()
-				         <<"new message had length "<<outputs.at(0).size()<<std::endl;
-				size_t newsize = outputs.at(0).size();
+				         <<"new message had length "<<outputs.at(1-o).size()<<std::endl;
+				size_t newsize = outputs.at(1-o).size();
 				unsigned char* newid = new unsigned char[newsize];
-				memcpy(newid,outputs.at(0).data(),newsize);
+				memcpy(newid,outputs.at(1-o).data(),newsize);
 				std::cout<<"new id is '";
 				for(int i=0; i<newsize; ++i){
 					printf("%02x",newid[i]);
@@ -775,7 +798,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 				std::cout<<"'"<<std::endl;
 			}
 			// override old client id with new cliend id
-			memcpy(cache.at(key).client_id.data(),outputs.at(0).data(),outputs.at(0).size());
+			memcpy(cache.at(key).client_id.data(),outputs.at(1-o).data(),outputs.at(1-o).size());
 			*/
 			
 			Log("We know this query...",10);
@@ -787,7 +810,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			Log("New query, adding to write queue",10);
 			// we don't have it waiting either in to-run or to-respond queues.
 			// construct a Query object to encapsulate the query
-			Query msg{outputs.at(0), outputs.at(1), outputs.at(2), outputs.at(3)};
+			Query msg{outputs.at(1-o), outputs.at(2-o), outputs.at(3-o), outputs.at(4-o)};
 			Log(Concat("QUERY WAS: '",msg.query,"'"),20);
 			wrt_txn_queue.emplace(key, msg);
 			
@@ -809,7 +832,8 @@ bool ReceiveSQL::GetClientReadQueries(){
 	
 	// check if we had any read transactions dealt to us
 	if(in_polls.at(0).revents & ZMQ_POLLIN){
-	
+		Log(">>> got a read query from client",4);
+		
 		++read_queries_recvd;
 		// We do. receive the next query
 		std::vector<zmq::message_t> outputs;
@@ -843,10 +867,10 @@ bool ReceiveSQL::GetClientReadQueries(){
 			memcpy((void*)client_str.data(),outputs.at(0).data(),outputs.at(0).size());
 		}
 		if(outputs.size()>1) msg_int = *reinterpret_cast<uint32_t*>(outputs.at(1).data());
-		if(outputs.size()>2){
-			dbname.resize(outputs.at(2).size(),'\0');
-			memcpy((void*)dbname.data(),outputs.at(2).data(),outputs.at(2).size());
-		}
+		//if(outputs.size()>2){
+		//	dbname.resize(outputs.at(2).size(),'\0');
+		//	memcpy((void*)dbname.data(),outputs.at(2).data(),outputs.at(2).size());
+		//}
 		if(outputs.size()>3){
 			qry_string.resize(outputs.at(3).size(),'\0');
 			memcpy((void*)qry_string.data(),outputs.at(3).data(),outputs.at(3).size());
@@ -854,7 +878,7 @@ bool ReceiveSQL::GetClientReadQueries(){
 		
 		if(outputs.size()!=4){
 			Log(Concat("unexpected ",outputs.size()," part message in Write query from client"),1);
-			Log(Concat("client: '",client_str,"', msg_id: ",msg_int,", db: '",dbname,"'"),4);
+			Log(Concat("client: '",client_str,"', msg_id: ",msg_int),4);
 			
 			++write_query_recv_fails;
 			return false;
@@ -917,7 +941,7 @@ bool ReceiveSQL::GetClientLogMessages(){
 	
 	// see if we had any write requests from clients
 	if(in_polls.at(3).revents & ZMQ_POLLIN){
-		Log("got a log message from client",4);
+		Log(">>> got a log message from client",4);
 		
 		++log_msgs_recvd;
 		// we did. receive next message.
@@ -931,33 +955,55 @@ bool ReceiveSQL::GetClientLogMessages(){
 			return false;
 		}
 		
+		// expected parts are:
+		// 0. publisher channel*
+		// 1. identity of the sender client
+		// 2. a timestamp of when this occurred
+		// 3. a severity
+		// 4. the log message
+		
+		//* the first zmq part sent by a pub socket is the pub 'channel'
+		// this is matched by zmq sub sockets to the ZMQ_SUBSCRIBE pattern,
+		// and any not matching are filtered out by zmq behind the scenes.
+		// Use an empty subscribe option to receive all messages.
+		// for non-empty subscribe options, the channel must match that prefix
+		// e.g. subscribing to 'CALIBRATION' will receive all messages sent on
+		// channels 'CALIBRATION_DATA' and 'CALIBRATION_CONFIG' etc.
+		// multiple ZMQ_SUBSCRIBE calls can be stacked.
+		// Note the matched channel is still returned to the user, so you can
+		// identify which channel the incoming message came from.
+		
+		/// FIXME currently we don't use channels, so the first part is NOT channel
+		/// but if we wanted to actually use the ZMQ_SUBSCRIBE feature in the future
+		/// it would be needed and the following indices would need to be updated
+		int o=1;
+		
 		// received message format should be a 4-part message
-		if(outputs.size()!=4){
+		if(outputs.size()!=5-o){
 			Log(Concat("unexpected ",outputs.size()," part message in Log msg from client"),1);
 			++log_msg_recv_fails;
 			return false;
 		}
 		
-		// expected parts are:
-		// 1. identity of the sender client
-		// 2. a timestamp of when this occurred
-		// 3. a severity
-		// 4. the log message
 		// we do not send acks for log messages, so do not need to track them (no repeat sends)
-		std::string client_str="-"; std::string timestamp="-"; std::string log_str="-";
+		std::string channel="-"; client_str="-"; std::string timestamp="-"; std::string log_str="-";
 		uint32_t severity;
-		if(outputs.size()>0){
-			client_str.resize(outputs.at(0).size(),'\0');
-			memcpy((void*)client_str.data(),outputs.at(0).data(),outputs.at(0).size());
+		/*if(outputs.size()>0){
+			channel.resize(outputs.at(0).size(),'\0');
+			memcpy((void*)channel.data(),outputs.at(0).data(),outputs.at(0).size());
+		} */
+		if(outputs.size()>1-o){
+			client_str.resize(outputs.at(1).size(),'\0');
+			memcpy((void*)client_str.data(),outputs.at(1-o).data(),outputs.at(1-o).size());
 		}
-		if(outputs.size()>1){
-			timestamp.resize(outputs.at(2).size(),'\0');
-			memcpy((void*)timestamp.data(),outputs.at(2).data(),outputs.at(2).size());
+		if(outputs.size()>2-o){
+			timestamp.resize(outputs.at(2-o).size(),'\0');
+			memcpy((void*)timestamp.data(),outputs.at(2-o).data(),outputs.at(2-o).size());
 		}
-		if(outputs.size()>2) severity = *reinterpret_cast<uint32_t*>(outputs.at(2).data());
-		if(outputs.size()>3){
-			log_str.resize(outputs.at(3).size(),'\0');
-			memcpy((void*)log_str.data(),outputs.at(3).data(),outputs.at(3).size());
+		if(outputs.size()>3-o) severity = *reinterpret_cast<uint32_t*>(outputs.at(3-o).data());
+		if(outputs.size()>4-o){
+			log_str.resize(outputs.at(4-o).size(),'\0');
+			memcpy((void*)log_str.data(),outputs.at(4-o).data(),outputs.at(4-o).size());
 		}
 		
 		in_log_queue.emplace_back(client_str, timestamp, severity, log_str);
@@ -2163,7 +2209,12 @@ bool ReceiveSQL::Send(zmq::socket_t* sock, bool more, const std::vector<std::str
 int ReceiveSQL::PollAndReceive(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, std::vector<zmq::message_t>& outputs){
 	
 	// poll the input socket for messages
-	get_ok = zmq::poll(&poll, 1, timeout);
+	try {
+		get_ok = zmq::poll(&poll, 1, timeout);
+	} catch (zmq::error_t& err){
+		std::cerr<<"ReceiveSQL::PollAndReceive poller caught "<<err.what()<<std::endl;
+		get_ok = -1;
+	}
 	if(get_ok<0){
 		// error polling - is the socket closed?
 		return -3;

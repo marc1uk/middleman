@@ -48,11 +48,11 @@ while [ true ]; do
 	echo -n "starting middleman at " >> middleman_runs.log
 	date >> middleman_runs.log
 	/opt/middleman/middleman /opt/middleman/ReceiveSQLConfig
-	echo -n "middleman exited with code $? at "
+	echo -n "middleman exited with code $? at " >> middleman_runs.log
 	date >> middleman_runs.log
 	sleep 1
 	if [ -f ${QUITFILE} ]; then
-		touch ${STOPFILE}; # trigger the middleman to stop
+		touch ${STOPFILE}; # trigger the middleman to stop, redundant
 		rm $QUITFILE
 		break;
 	fi

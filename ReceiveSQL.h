@@ -301,7 +301,13 @@ class ReceiveSQL{
 	template <typename T>
 	int PollAndSend(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, T&& message){
 		// check for listener
-		int ret = zmq::poll(&poll, 1, timeout);
+		int ret = 0;
+		try {
+			ret = zmq::poll(&poll, 1, timeout);
+		} catch (zmq::error_t& err){
+			std::cerr<<"ReceiveSQL::PollAndSend poller caught "<<err.what()<<std::endl;
+			ret = -1;
+		}
 		if(ret<0){
 			// error polling - is the socket closed?
 			return -3;
@@ -321,7 +327,13 @@ class ReceiveSQL{
 	template <typename T, typename... Rest>
 	int PollAndSend(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, T&& message, Rest&&... rest){
 		// check for listener
-		int ret = zmq::poll(&poll, 1, timeout);
+		int ret = 0;
+		try {
+			ret = zmq::poll(&poll, 1, timeout);
+		} catch (zmq::error_t& err){
+			std::cerr<<"ReceiveSQL::PollAndSend poller caught "<<err.what()<<std::endl;
+			ret = -1;
+		}
 		if(ret<0){
 			// error polling - is the socket closed?
 			return -3;
