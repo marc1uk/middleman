@@ -4,6 +4,9 @@
 
 // for passing input variables
 #include "Store.h"
+// used in json parsing
+#include "JsonParser.h"
+#include "BStore.h"
 // for finding clients
 #include "ServiceDiscovery.h"
 #include "Utilities.h"
@@ -14,8 +17,6 @@
 #include <pqxx/pqxx>
 // wrapper class for zmq messages
 #include "Query.h"
-// wrapper class for log messages
-#include "LogMsg.h"
 // for network comms
 #include <zmq.hpp>
 // for keeping track of elapsed time durations
@@ -25,6 +26,12 @@
 #include <string>
 #include <iostream>
 #include <deque>
+// multicast
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <fcntl.h>
 
 class ReceiveSQL{
 	public:
@@ -32,8 +39,9 @@ class ReceiveSQL{
 	~ReceiveSQL(){};
 	
 	bool Initialise(const std::string& configfile);
-	bool InitPostgres(Store& m_variables);
+	bool InitPostgres(Store& m_variables, const std::string& prefix);
 	bool InitZMQ(Store& m_variables);
+	bool InitMulticast(Store& m_variables);
 	bool InitMessaging(Store& m_variables);
 	bool InitServiceDiscovery(Store& m_variables);
 	bool InitControls(Store& m_variables);
@@ -42,15 +50,20 @@ class ReceiveSQL{
 	bool FindNewClients();
 	bool FindNewClients_v2();
 	bool GetClientWriteQueries();
+	bool WriteMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out);
 	bool GetClientReadQueries();
-	bool GetClientLogMessages();
+	bool ReadMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out);
+	bool GetMulticastMessages();
+	bool MulticastMessageToQuery(const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out);
 	bool GetMiddlemanCheckin();
 	bool CheckMasterStatus();
 	bool RunNextWriteQuery();
 	bool RunNextReadQuery();
+	bool RunNextMonitoringMsg();
 	bool RunNextLogMsg();
 	bool SendNextReply();
 	bool SendNextLogMsg();
+	std::string escape_json(std::string s);
 	bool BroadcastPresence();
 	bool CleanupCache();
 	bool TrimQueue(const std::string& queuename);
@@ -73,7 +86,6 @@ class ReceiveSQL{
 	
 	// Logging functions
 	bool Log(const std::string& message, uint32_t message_severity);
-	bool LogToDb(const LogMsg& logmsg);
 	
 	// generic receive functions
 	int PollAndReceive(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, std::vector<zmq::message_t>& outputs);
@@ -81,7 +93,7 @@ class ReceiveSQL{
 	
 	private:
 	// an instance of the postgres interface class to communicate with the database(s)
-	Postgres m_database;
+	std::map<std::string,Postgres> m_databases;
 	
 	SlowControlCollection SC_vars;
 	std::string stopfile="stop";
@@ -101,11 +113,9 @@ class ReceiveSQL{
 	zmq::socket_t* clt_rtr_socket=nullptr;  // receives read queries from client dealers
 	zmq::socket_t* clt_sub_socket=nullptr;  // receives write queries from client publishers
 	zmq::socket_t* mm_rcv_socket=nullptr;   // receives connections from other middlemen
-	zmq::socket_t* log_sub_socket=nullptr;  // receives log messages from client publishers
 	
 	// these sockets will bind, they advertise our services
 	zmq::socket_t* mm_snd_socket=nullptr;   // we will advertise our presence as a middleman to other middlemen
-	zmq::socket_t* log_pub_socket=nullptr;  // we will advertise our presence as a source of logging
 	
 	// Service Discovery finds clients that are interested in our services
 	// and connect us to those sockets
@@ -117,7 +127,14 @@ class ReceiveSQL{
 	std::map<std::string,Store*> clt_rtr_connections;
 	std::map<std::string,Store*> mm_rcv_connections;
 	std::map<std::string,Store*> clt_sub_connections;
-	std::map<std::string,Store*> log_sub_connections;
+	
+	// multicast socket file descriptor
+	int multicast_socket=-1;
+	// multicast destination address structure
+	struct sockaddr_in multicast_addr;
+	socklen_t multicast_addrlen;
+	// apparently works with zmq poller?
+	zmq::pollitem_t multicast_poller;
 	
 	// poll timeouts
 	int inpoll_timeout;
@@ -131,15 +148,12 @@ class ReceiveSQL{
 	// these sockets get deleted and re-constructed as we get demoted/promoted, and we will need
 	// their variables to create the sockets as required.
 	// (afaict you can't just disconnect and reconnect a socket...)
-	int log_pub_port;
 	int clt_sub_socket_timeout;
-	int log_sub_socket_timeout;
 	// we also keep this one, but only to pass from InitZMQ to InitServiceDiscovery, where we register it
 	int mm_snd_port;
 	
 	// finally we also need to keep some port numbers that would normally be found dynamically,
 	// but we now need to hard-code them for the new FindNewClients_v2
-	int log_sub_port;
 	int clt_sub_port;
 	int clt_rtr_port;
 	int mm_rcv_port;
@@ -173,8 +187,9 @@ class ReceiveSQL{
 	std::map<std::pair<std::string, uint32_t>, Query> wrt_txn_queue;
 	std::map<std::pair<std::string, uint32_t>, Query> rd_txn_queue;
 	std::map<std::pair<std::string, uint32_t>, Query> resp_queue;
-	std::deque<LogMsg> in_log_queue;
-	std::deque<LogMsg> out_log_queue;
+	std::deque<std::string> in_log_queue;
+	std::deque<std::string> out_log_queue;
+	std::deque<std::string> in_monitoring_queue;
 	// we'll cache a set of recent responses send to each client,
 	// then if a client that misses their acknowledgement and resends the query,
 	// we can resend the response without re-running the query.
@@ -193,8 +208,11 @@ class ReceiveSQL{
 	// do we just error out, or, if we're the master, do we just run it anyway...?
 	bool handle_unexpected_writes = false;
 	
+	// for parsing json
+	JSONP parser;
+	
 	// generally useful variable for getting return values
-	bool get_ok;
+	int get_ok;
 	// a general elapsed time variable we can re-use in calculations
 	boost::posix_time::time_duration elapsed_time;
 	
@@ -247,6 +265,8 @@ class ReceiveSQL{
 	// number of log messages we've fropped from queues due to overflow
 	unsigned long dropped_logs_out = 0;
 	unsigned long dropped_logs_in = 0;
+	unsigned long dropped_monitoring_in = 0;
+	unsigned long dropped_monitoring_out = 0;
 	
 	// how often to calculate stats
 	boost::posix_time::time_duration stats_period;

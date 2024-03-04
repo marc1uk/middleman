@@ -134,6 +134,7 @@ bool Postgres::Query(std::string query, int nret, pqxx::result* res, pqxx::row* 
 			// the type of exec we run is based on the user's expected number of returned rows, nret
 			if(nret==0){
 				txn.exec0(query);
+				return true;
 			} else if(res==nullptr && row==nullptr){
 				std::string msg =  "Postgres::ExecuteQuery called with expected number of returned rows ";
 				            msg += std::to_string(nret)+" but nowhere to return the result!";
@@ -412,4 +413,42 @@ bool Postgres::Demote(int wait_seconds, std::string* err){
 	*/
 	
 	return succeeded;
+}
+
+// Quoting functions
+// =================
+// quote field or table names (nominally use double quotes)
+bool Postgres::pqxx_quote_name(const std::string& in, std::string& out, std::string* err){
+	out = in; // often this will be sufficient
+	if(OpenConnection(err)==nullptr) return false;
+	try {
+		out = conn->quote_name(in);
+		return true;
+	} catch (std::exception& e){
+		std::string errmsg = std::string("Postgres::pqxx_quote_name threw exception ")
+		                     +e.what()+" trying to quote '"+in+"'";
+		std::cerr<<errmsg<<std::endl;
+		if(err) *err=errmsg;
+	}
+	return false;
+}
+
+// quote values (nominally, use single quotes)
+// TODO error signalling here sucks; shouldn't just return empty on failure!
+bool Postgres::pqxx_quote(const std::string& in, std::string& out, std::string* err){
+	out = in;
+	//return pqxx::nullconnection{}.quote(string);
+	// annoyingly we can't use a null connection just to get libpqxx to quote things for us;
+	// we must have a valid connection to a real database :/
+	if(OpenConnection(err)==nullptr) return false;
+	try {
+		out = conn->quote(in);
+		return true;
+	} catch (std::exception& e){
+		std::string errmsg = std::string("Postgres::pqxx_quote<std::string> threw exception ")
+		                     +e.what()+" trying to quote '"+in+"'";
+		std::cerr<<errmsg<<std::endl;
+		if(err) *err=errmsg;
+	}
+	return false;
 }

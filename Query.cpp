@@ -1,21 +1,12 @@
 #include "Query.h"
 
 // constructor from elements, given a direct SQL query string
-Query::Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, zmq::message_t& database_in, zmq::message_t& query_in, uint32_t query_ok_in, std::string response_in){
+Query::Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, const std::string& database_in, const std::string& query_in, uint32_t query_ok_in, std::string response_in){
 	client_id.move(&client_id_in);
 	message_id.move(&msg_id_in);
 	
-	// NOPE reinterpret_cast and copy construction doesn't work
-	//database = reinterpret_cast<const char*>(database_in.data());
-	// XXX instead use memcpy and trim
-	database.resize(database_in.size(),'\0');
-	memcpy((void*)database.data(),database_in.data(),database_in.size());
-	database = database.substr(0,database.find('\0'));
-	
-	//query = reinterpret_cast<const char*>(query_in.data());
-	query.resize(query_in.size(),'\0');
-	memcpy((void*)query.data(),query_in.data(),query_in.size());
-	query = query.substr(0,query.find('\0'));
+	database = database_in.substr(0,database_in.find('\0'));
+	query = query_in.substr(0,query_in.find('\0'));
 	
 	//std::cout<<"building query for db: '"<<database<<"', query_string: '"<<query<<"'"<<std::endl;
 	query_ok=query_ok_in;

@@ -27,7 +27,7 @@ class Postgres {
 	// wrapper around exec since we handle the transaction and connection.
 	// nret specifies the expected number of returned rows from the query.
 	// res and row are outputs. return value is success.
-	bool Query(std::string query, int nret, pqxx::result* res=nullptr, pqxx::row* row=nullptr, std::string* err=nullptr);
+	bool Query(std::string query, int nret=0, pqxx::result* res=nullptr, pqxx::row* row=nullptr, std::string* err=nullptr);
 	
 	// one that returns the value of many fields from one row as strings in a vector (row_or_col='r')
 	// or the value of one field from many rows (row_or_col='c')
@@ -221,6 +221,23 @@ class Postgres {
 	}
 	// end helper function
 	////////
+	
+	
+	// ----------------- //
+	// Quoting Functions //
+	// ----------------- //
+	// to safely handle various datatypes we need to properly quote things, which can be complex.
+	// libpqxx has functions that will do this for us, but for some reason they're methods of the
+	// connection or transaction classes, and cannot be done with a 'null connection'. :(
+	// https://libpqxx.readthedocs.io/en/6.3/a00255.html#ga81fe65fbb9561af7c5f0b33a9fe27e5a
+	// -------
+	// quote field or table names (nominally use double quotes)
+	bool pqxx_quote_name(const std::string& in, std::string& out, std::string* err=nullptr);
+	
+	// quote values (nominally, use single quotes)
+	bool pqxx_quote(const std::string& in, std::string& out, std::string* err=nullptr);
+	// ------------------ //
+	
 };
 
 

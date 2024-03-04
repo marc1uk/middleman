@@ -16,6 +16,8 @@ clt_rtr_port 55555
 mm_snd_port 55597
 log_pub_port 55554
 remote_control_port 24011
+multicast_port 55554
+multicast_address 239.192.1.1
 
 # all timeouts in ms
 clt_sub_socket_timeout 500

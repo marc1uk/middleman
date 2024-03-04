@@ -111,7 +111,7 @@ int Utilities::UpdateConnections(std::string ServiceName, zmq::socket_t* sock, s
     return connections.size();
   }
 
-int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, int read_port_num, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, int write_port_num, zmq::socket_t* log_sock, std::map<std::string,Store*> &log_conns, int log_port_num, zmq::socket_t* mm_sock, std::map<std::string, Store*> &mm_conns, int mm_port_num){
+int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, int read_port_num, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, int write_port_num, zmq::socket_t* mm_sock, std::map<std::string, Store*> &mm_conns, int mm_port_num){
     // it's like UpdateConnections, but rather than connecting to specifically named endpoints,
     // we find all services that aren't middlemen and assume they have associated postgres client endpoints
     // for middlemen, we likewise find their Control service and assume they have a inter-middlemen comms point
@@ -181,7 +181,7 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
           readrep_sock->connect(tmp.c_str());
           ++num_new_connections;
           
-          // write and logging sockets are only connected to by the master middleman
+          // write socket is only connected to by the master middleman
           if(write_sock){
             // write queries
             type = "psql_write";
@@ -192,23 +192,6 @@ int Utilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::str
             tmp=ip + ":" + store_port;
             tmp="tcp://"+ tmp;
             write_sock->connect(tmp.c_str());
-            ++num_new_connections;
-          }
-          
-          // FIXME currently the PGClient does not actually bind to a logging socket
-          // so this connect attempt will fail. What then? no idea. The zmq-cpp wrapper socket_t::connect
-          // (http://api.zeromq.org/2-1:zmq-cpp) does not forward the returnval from the underlying
-          // zmq_connect call, so who knows, perhaps it just fails silently. Brilliant.
-          if(log_sock){
-            // logging messages
-            type = "logging";
-            store_port=std::to_string(log_port_num); // "55554";
-            service->Set("msg_value",type);
-            service->Set("remote_port",store_port);
-            log_conns[ip]=service;
-            tmp=ip + ":" + store_port;
-            tmp="tcp://"+ tmp;
-            log_sock->connect(tmp.c_str());
             ++num_new_connections;
           }
           
