@@ -2179,12 +2179,17 @@ bool ReceiveSQL::TrackStats(){
 		       <<"]; d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_logs_in<<"|"<<dropped_acks
 		       <<"]";
 		SC_vars["Status"]->SetValue(status.str());
-		
+
+		/*
 		// temporarily bypass the database logging level to ensure it gets sent to the monitoring db.
 		int db_verbosity_tmp = db_verbosity;
 		db_verbosity = 10;
 		Log(Concat("Monitoring Stats:",json_stats),5);
 		db_verbosity = db_verbosity_tmp;
+		*/
+		std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
+		                    + my_id+"', '"+json_stats+"' );";
+		in_monitoring_queue.push_back(sql_qry);
 		
 		last_stats_calc = boost::posix_time::microsec_clock::universal_time();
 	}
