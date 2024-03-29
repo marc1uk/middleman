@@ -1342,7 +1342,7 @@ bool ReceiveSQL::GetMulticastMessages(){
 			
 		} else {
 			// could not determine multicast type
-			Log(std::string{"Unable to parse multicast message '"}+message+"'",v_error);
+			Log(std::string{"Unable to parse multicast message '"}+message+"' of topic '"+topic+"'",v_error);
 			++log_msg_recv_fails;
 			return false;
 			
@@ -1431,7 +1431,8 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		return true;
 		
 	} else if(tmp.Has("data")){
-		
+
+		topic_out = "monitoring";
 		db_out = "daq";
 		Postgres& a_database = m_databases.at(db_out);
 		
