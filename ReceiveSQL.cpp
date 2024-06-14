@@ -1086,6 +1086,67 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		
 		return true;
 		
+	} else if(topic=="ROOTPLOT"){
+		
+		db_out = "daq"; // FIXME db
+		Postgres& a_database = m_databases.at(db_out);
+		
+		// record a new persistent root plot
+		//time_t timestamp{0};
+		uint32_t timestamp{0};
+		std::string plot_name;
+		std::string draw_options;
+		std::string json_data;
+		tmp.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+		get_ok  = tmp.Get("plot_name",plot_name);
+		get_ok &= tmp.Get("draw_options",draw_options);
+		get_ok &= tmp.Get("data",json_data);
+		if(!get_ok){
+			Log("WriteMessageToQuery: missing fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// SQL sanitization
+		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+		get_ok &= a_database.pqxx_quote(draw_options, draw_options);
+		get_ok &= a_database.pqxx_quote(json_data, json_data);
+		if(!get_ok){
+			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// times are received in unix seconds since epoch, or 0 for 'now()'.
+		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+		std::string timestring;
+		if(timestamp==0){
+			timestring="now()";
+		} else {
+			timestring.resize(22, '\0');
+			struct tm* timeptr = gmtime((time_t*)&timestamp);
+			if(timeptr==0){
+				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
+				return false; // we could fall back to now(), but we leave that decision to the user.
+			}
+			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
+			if(get_ok==0){
+				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
+				return false; // we could fall back to now(), but we leave that decision to the user.
+			}
+		}
+		
+		// FIXME this needs to insert into a persistent root plots table
+		sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
+		        + timestring + "',"
+		        + plot_name  + ","
+		        + "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
+		        + draw_options  + ","
+		        + json_data       + ") returning version;";
+		
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+		
+		return true;
+		
 	}
 	
 	// if not caught by now:
@@ -1309,10 +1370,10 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 			return false;
 		}
 		
-		sql_out = "SELECT draw_opts, time, json_data FROM rootplots WHERE plot_name="
-		        + plot_name;
+		// FIXME this needs to know which rootplots table to read from
+		sql_out = "SELECT draw_options, time, version, data FROM rootplots WHERE name=" + plot_name;
 		if(version<0){
-			sql_out += " ORDER BY time DESCENDING LIMIT 1;";
+			sql_out += " ORDER BY time DESC LIMIT 1;";
 		} else {
 			" AND version=" + std::to_string(version);
 		}
@@ -1342,7 +1403,7 @@ bool ReceiveSQL::GetMulticastMessages(){
 		++multicast_msgs_recvd;
 		
 		// read the messge
-		char message[512];
+		char message[65535]; // theoretical maximum UDP buffer size
 		int cnt = recvfrom(multicast_socket, message, sizeof(message), 0, (struct sockaddr*)&multicast_addr, &multicast_addrlen);
 		if(cnt <= 0){
 			Log(std::string{"Failed to receive on multicast socket with error '"}+strerror(errno)+"'",v_error);
@@ -1536,11 +1597,11 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		//time_t timestamp{0};
 		uint32_t timestamp{0};
 		std::string data;
-		std::string draw_opts;
+		std::string draw_options;
 		tmp.Get("time",timestamp); // optional
 		get_ok = tmp.Get("plot_name",plot_name);
 		get_ok &= tmp.Get("data",data);
-		get_ok &= tmp.Get("draw_opts",draw_opts);
+		get_ok &= tmp.Get("draw_options",draw_options);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
 			++multicast_msg_recv_fails;
@@ -1549,7 +1610,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		
 		// SQL sanitization
 		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
-		get_ok &= a_database.pqxx_quote(draw_opts, draw_opts);
+		get_ok &= a_database.pqxx_quote(draw_options, draw_options);
 		get_ok &= a_database.pqxx_quote(data, data);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
@@ -1576,11 +1637,12 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		}
 		
 		// form into a suitable SQL query
-		sql_out = "INSERT INTO rootplots ( time, name, version, draw_opts, data ) VALUES ( '"
+		// FIXME this needs to insert into a temporary root plots table
+		sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
 		        + timestring + "',"
 		        + plot_name  + ","
 		        + "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
-		        + draw_opts  + ","
+		        + draw_options  + ","
 		        + data       + ") returning version;";
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),4);
