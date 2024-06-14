@@ -81,6 +81,7 @@ class ReceiveSQL{
 	bool UpdateRole();
 	boost::posix_time::ptime ToTimestamp(const std::string& timestring);
 	std::string ToTimestring(boost::posix_time::ptime);
+	bool TimeStringFromUnixMs(uint32_t timestamp, std::string& timestring);
 	bool GetLastUpdateTime(std::string& our_timestamp);
 	
 	// Logging functions

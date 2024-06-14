@@ -905,7 +905,7 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		
 		// make a new device config entry
 		//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
-		uint32_t timestamp{0};
+		uint32_t timestamp{0}; // ms since unix epoch
 		std::string device;
 		std::string author;
 		std::string description;
@@ -930,27 +930,12 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 			return false;
 		}
 		
-		// times are received in unix seconds since epoch, or 0 for 'now()'.
+		// times are received in unix milliseconds since epoch, or 0 for 'now()'.
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			std::cout<<"converting time "<<timestamp<<" to timestring"<<std::endl;
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			std::cout<<"timeptr is "<<timeptr<<std::endl;
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		sql_out = "INSERT INTO device_config (time, device, version, author, description, data) VALUES ( '"
 		        + timestring  + "',"
@@ -998,21 +983,8 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		sql_out = "INSERT INTO calibration (time, device, version, description, data) VALUES ( '"
 		        + timestring   + "',"
@@ -1057,21 +1029,8 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		sql_out = "INSERT INTO alarms (time, device, level, alarm) VALUES ( '"
 		        + timestring            + "',"
@@ -1116,21 +1075,8 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		// FIXME this needs to insert into a persistent root plots table
 		sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
@@ -1498,24 +1444,8 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				++multicast_msg_recv_fails;
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				timestring="now()";
-				// XXX perhaps for mutlicast messages as errors are not propagated back to sender,
-				// it's better to fallback to the assumption of now()?
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
 		sql_out = "INSERT INTO logging ( time, device, severity, message ) VALUES ( '"
@@ -1557,22 +1487,8 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		}
 		
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				++multicast_msg_recv_fails;
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				timestring="now()";   // XXX
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
 		sql_out = "INSERT INTO monitoring ( time, device, data ) VALUES ( '"
@@ -1616,22 +1532,8 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		}
 		
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				++multicast_msg_recv_fails;
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				timestring="now()";   // XXX
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
 		// FIXME this needs to insert into a temporary root plots table
@@ -2315,9 +2217,17 @@ bool ReceiveSQL::TrackStats(){
 		Log(Concat("Monitoring Stats:",json_stats),5);
 		db_verbosity = db_verbosity_tmp;
 		*/
-		std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
-		                    + my_id+"', '"+json_stats+"' );";
-		out_log_queue.push_back(sql_qry);
+		if(am_master){
+			std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
+			                    + my_id+"', '"+json_stats+"' );";
+			in_multicast_queue.push_back(sql_qry);
+		} else {
+			std::string multicast_msg = "{ \"topic\":\"monitoring\""
+			                            ", \"device\":\""+escape_json(my_id)+"\", "
+			                          + ", \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
+			                          + ", \"data\":\""+json_stats+"\" }";
+			out_log_queue.push_back(multicast_msg);
+		}
 		
 		last_stats_calc = boost::posix_time::microsec_clock::universal_time();
 	}
@@ -2769,6 +2679,40 @@ bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+bool ReceiveSQL::TimeStringFromUnixMs(uint32_t timestamp, std::string& timestring){
+	
+	if(timestamp==0){
+		timestring="now()";
+	} else {
+		//std::cout<<"converting time "<<timestamp<<" to timestring"<<std::endl;
+		timestring.resize(22, '\0');
+		int timestamp_ms = timestamp%1000;
+		int timestamp_sec = timestamp*0.001;
+		struct tm* timeptr = gmtime((time_t*)&timestamp_sec);
+		//std::cout<<"timeptr is "<<timeptr<<std::endl;
+		if(timeptr==0){
+			Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to time struct",v_error);
+			return false; // we could fall back to now(), but we leave that decision to the user.
+		}
+		get_ok = strftime(const_cast<char*>(timestring.data()), timestring.length(), "%F %T%Z", timeptr);
+		if(get_ok==0){
+			Log("strftime error converting time struct '"+std::to_string(timestamp)+"' to string",v_error);
+			return false; // we could fall back to now(), but we leave that decision to the user.
+		}
+		// add back on the milliseconds
+		std::string timestring_ms(3,'\0');
+		int nchars = snprintf(const_cast<char*>(timestring_ms.data()), timestring_ms.length()+1, "%03d", timestamp_ms);
+		if(nchars!=3){
+			Log("snprintf error converting '"+std::to_string(timestamp_ms)+"' to timestamp milliseconds",v_error);
+			// just omit the milliseconds?
+		} else {
+			timestring = timestring.substr(0,19) + "." + timestring_ms + timestring.substr(19,std::string::npos);
+		}
+	}
+	return true;
+	
+}
+
 std::string ReceiveSQL::escape_json(std::string s){
 	// https://stackoverflow.com/a/27516892
 	
@@ -2976,7 +2920,7 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			// add to the queue of logging messages to send to the master over ZMQ
 			
 			// form the required JSON
-			std::string logmsg = "{ \"time\":"+std::to_string(time(nullptr))
+			std::string logmsg = "{ \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
 			                   +", \"device\":\""+escape_json(my_id)+"\""
 			                   +", \"severity\":"+std::to_string(message_severity)
 			                   +", \"message\":\""+escape_json(message)+"\" }";
