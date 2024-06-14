@@ -1403,7 +1403,7 @@ bool ReceiveSQL::GetMulticastMessages(){
 		++multicast_msgs_recvd;
 		
 		// read the messge
-		char message[65535]; // theoretical maximum UDP buffer size
+		char message[655355]; // theoretical maximum UDP buffer size
 		int cnt = recvfrom(multicast_socket, message, sizeof(message), 0, (struct sockaddr*)&multicast_addr, &multicast_addrlen);
 		if(cnt <= 0){
 			Log(std::string{"Failed to receive on multicast socket with error '"}+strerror(errno)+"'",v_error);
@@ -1643,7 +1643,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		        + plot_name  + ","
 		        + "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
 		        + draw_options  + ","
-		        + data       + ") returning version;";
+		        + data       + ");";
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),4);
 		
