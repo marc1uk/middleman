@@ -126,12 +126,10 @@ bool ReceiveSQL::Execute(){
 	get_ok = TrimQueue("rd_txn_queue");
 	Log("Trimming Ack Queue",4);
 	get_ok = TrimQueue("response_queue");
-	Log("Trimming In Logging Deque",4);
+	Log("Trimming In Multicast Deque",4);
 	get_ok = TrimDequeue("in_multicast_queue");
 	Log("Trimming Out Logging Deque",4);
 	get_ok = TrimDequeue("out_log_queue");
-	Log("Trimming In Monitoring Deque",4);
-	get_ok = TrimDequeue("in_multicast_queue");
 	Log("Trimming Cache",4);
 	get_ok = TrimCache();
 	Log("Cleaning Up Old Cache Messages",4);
@@ -187,7 +185,6 @@ bool ReceiveSQL::Finalise(){
 	cache.clear();
 	in_multicast_queue.clear();
 	out_log_queue.clear();
-	in_multicast_queue.clear();
 	
 	Log("Deleting context",3);
 	if(context){ delete context; context=nullptr; }
@@ -2320,7 +2317,7 @@ bool ReceiveSQL::TrackStats(){
 		*/
 		std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
 		                    + my_id+"', '"+json_stats+"' );";
-		in_multicast_queue.push_back(sql_qry);
+		out_log_queue.push_back(sql_qry);
 		
 		last_stats_calc = boost::posix_time::microsec_clock::universal_time();
 	}
