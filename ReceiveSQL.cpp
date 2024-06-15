@@ -187,7 +187,7 @@ bool ReceiveSQL::Finalise(){
 	out_log_queue.clear();
 	
 	Log("Deleting context",3);
-	if(context){ delete context; context=nullptr; }
+	//if(context){ delete context; context=nullptr; }
 	
 	Log("Done, returning",3);
 	return true;
