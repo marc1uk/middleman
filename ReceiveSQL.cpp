@@ -1318,7 +1318,7 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 		if(version<0){
 			sql_out += " ORDER BY time DESC LIMIT 1;";
 		} else {
-			" AND version=" + std::to_string(version);
+			sql_out += " AND version=" + std::to_string(version);
 		}
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
