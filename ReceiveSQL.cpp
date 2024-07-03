@@ -2892,11 +2892,21 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 	std::string timestring = ToTimestring(boost::posix_time::microsec_clock::universal_time());
 	
 	// log to database, if within database logging verbosity
-	if(message_severity < db_verbosity && !m_databases.empty()){
-		
+	if(message_severity < db_verbosity){
 		// we'll either want to run this locally, or send it to the master, depending on our role
 		if(am_master){
 			// queue up for logging to our local monitoring database
+			if(m_databases.empty()){
+				// right now we only need the connection for sanitizing the message.
+				// i guess we could just implement our own sanitization function to call here,
+				// then we can put the message into the in_multicast_queue and have the lack of connection
+				// problem dealt with where it's more relevant (where the insertion actually takes place).
+				// ... but i'd rather not risk implementing a bad sanitization and having things
+				// go really wrong? Logging messages are probably not too bad to lose...
+				std::cerr<<"Log call for message '"<<message<<"' of severity "<<message_severity
+				         <<", db_verbosity "<<db_verbosity<<" but no db connection is open!"<<std::endl;
+				return false;
+			}
 			
 			// SQL sanitization
 			std::string msg;
