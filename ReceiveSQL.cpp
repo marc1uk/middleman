@@ -2892,7 +2892,7 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 	std::string timestring = ToTimestring(boost::posix_time::microsec_clock::universal_time());
 	
 	// log to database, if within database logging verbosity
-	if(message_severity < db_verbosity){
+	if(message_severity < db_verbosity && !m_databases.empty()){
 		
 		// we'll either want to run this locally, or send it to the master, depending on our role
 		if(am_master){
@@ -2928,7 +2928,7 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			out_log_queue.emplace_back(logmsg);
 		}
 		
-	} // else outside db logging verbosity
+	} // else outside db logging verbosity or no db to log to
 	
 	return true;
 }
