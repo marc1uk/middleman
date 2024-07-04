@@ -10,7 +10,9 @@ export LD_LIBRARY_PATH=/opt/libpqxx-6.4.5/install/lib:/opt/boost_1_66_0/install/
 export PG_COLOR=always
 export PGHOST=/tmp
 export PGPORT=5432
-#export PGUSER=admin
+if [ -z "${PGUSER}" ]; then
+	export PGUSER=postgres
+fi
 export PGDATABASE=daq
 export PGDATA=/var/lib/pgsql/data
 

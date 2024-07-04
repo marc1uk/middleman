@@ -95,10 +95,8 @@ bool ReceiveSQL::Execute(){
 	Log("Running Next Read Query",4);
 	get_ok = RunNextReadQuery();
 	if(am_master){
-		Log("Running Next Log Message",4);
-		get_ok = RunNextLogMsg();
-		Log("Running Next Monitoring Message",4);
-		get_ok = RunNextMonitoringMsg();
+		Log("Running Next Fire-and-Forget Message",4);
+		get_ok = RunNextMulticastMsg();
 	}
 	
 	// poll the output sockets for listeners
@@ -128,12 +126,10 @@ bool ReceiveSQL::Execute(){
 	get_ok = TrimQueue("rd_txn_queue");
 	Log("Trimming Ack Queue",4);
 	get_ok = TrimQueue("response_queue");
-	Log("Trimming In Logging Deque",4);
-	get_ok = TrimDequeue("in_log_queue");
+	Log("Trimming In Multicast Deque",4);
+	get_ok = TrimDequeue("in_multicast_queue");
 	Log("Trimming Out Logging Deque",4);
 	get_ok = TrimDequeue("out_log_queue");
-	Log("Trimming In Monitoring Deque",4);
-	get_ok = TrimDequeue("in_monitoring_queue");
 	Log("Trimming Cache",4);
 	get_ok = TrimCache();
 	Log("Cleaning Up Old Cache Messages",4);
@@ -187,12 +183,11 @@ bool ReceiveSQL::Finalise(){
 	rd_txn_queue.clear();
 	resp_queue.clear();
 	cache.clear();
-	in_log_queue.clear();
+	in_multicast_queue.clear();
 	out_log_queue.clear();
-	in_monitoring_queue.clear();
 	
 	Log("Deleting context",3);
-	if(context){ delete context; context=nullptr; }
+	//if(context){ delete context; context=nullptr; }
 	
 	Log("Done, returning",3);
 	return true;
@@ -910,7 +905,7 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		
 		// make a new device config entry
 		//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
-		uint32_t timestamp{0};
+		uint32_t timestamp{0}; // ms since unix epoch
 		std::string device;
 		std::string author;
 		std::string description;
@@ -935,27 +930,12 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 			return false;
 		}
 		
-		// times are received in unix seconds since epoch, or 0 for 'now()'.
+		// times are received in unix milliseconds since epoch, or 0 for 'now()'.
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			std::cout<<"converting time "<<timestamp<<" to timestring"<<std::endl;
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			std::cout<<"timeptr is "<<timeptr<<std::endl;
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		sql_out = "INSERT INTO device_config (time, device, version, author, description, data) VALUES ( '"
 		        + timestring  + "',"
@@ -1003,21 +983,8 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		sql_out = "INSERT INTO calibration (time, device, version, description, data) VALUES ( '"
 		        + timestring   + "',"
@@ -1062,27 +1029,62 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
 		
 		sql_out = "INSERT INTO alarms (time, device, level, alarm) VALUES ( '"
 		        + timestring            + "',"
 		        + device                + ","
 		        + std::to_string(level) + ","
 		        + msg                   + ");";
+		
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+		
+		return true;
+		
+	} else if(topic=="ROOTPLOT"){
+		
+		db_out = "daq"; // FIXME db
+		Postgres& a_database = m_databases.at(db_out);
+		
+		// record a new persistent root plot
+		//time_t timestamp{0};
+		uint32_t timestamp{0};
+		std::string plot_name;
+		std::string draw_options;
+		std::string json_data;
+		tmp.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+		get_ok  = tmp.Get("plot_name",plot_name);
+		get_ok &= tmp.Get("draw_options",draw_options);
+		get_ok &= tmp.Get("data",json_data);
+		if(!get_ok){
+			Log("WriteMessageToQuery: missing fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// SQL sanitization
+		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+		get_ok &= a_database.pqxx_quote(draw_options, draw_options);
+		get_ok &= a_database.pqxx_quote(json_data, json_data);
+		if(!get_ok){
+			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// times are received in unix seconds since epoch, or 0 for 'now()'.
+		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+		std::string timestring;
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) return false;
+		
+		// FIXME this needs to insert into a persistent root plots table
+		sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
+		        + timestring + "',"
+		        + plot_name  + ","
+		        + "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
+		        + draw_options  + ","
+		        + json_data       + ") returning version;";
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
 		
@@ -1289,6 +1291,40 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 		
 		return true;
 		
+	} else if(topic=="ROOTPLOT"){
+		
+		db_out = "daq";
+		Postgres& a_database = m_databases.at(db_out);
+		
+		// get a ROOT plot entry
+		std::string plot_name;
+		int version=-1;
+		get_ok  = tmp.Get("plot_name",plot_name);
+		get_ok &= tmp.Get("version",version);
+		if(!get_ok){
+			Log("ReadMessageToQuery missing fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// SQL sanitization
+		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+		if(!get_ok){
+			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// FIXME this needs to know which rootplots table to read from
+		sql_out = "SELECT draw_options, time, version, data FROM rootplots WHERE name=" + plot_name;
+		if(version<0){
+			sql_out += " ORDER BY time DESC LIMIT 1;";
+		} else {
+			sql_out += " AND version=" + std::to_string(version);
+		}
+		
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+		
+		return true;
+		
 	}
 	
 	// if not caught by now:
@@ -1307,14 +1343,14 @@ bool ReceiveSQL::GetMulticastMessages(){
 	// see if we had any multicast messages
 	if(in_polls.at(0).revents & ZMQ_POLLIN){
 		Log(">>> got a multicast message from client",4);
-		++log_msgs_recvd;
+		++multicast_msgs_recvd;
 		
 		// read the messge
-		char message[512];
+		char message[655355]; // theoretical maximum UDP buffer size
 		int cnt = recvfrom(multicast_socket, message, sizeof(message), 0, (struct sockaddr*)&multicast_addr, &multicast_addrlen);
 		if(cnt <= 0){
 			Log(std::string{"Failed to receive on multicast socket with error '"}+strerror(errno)+"'",v_error);
-			++log_msg_recv_fails;
+			++multicast_msg_recv_fails;
 			return false;
 		}
 		
@@ -1327,23 +1363,20 @@ bool ReceiveSQL::GetMulticastMessages(){
 		get_ok = MulticastMessageToQuery(message, topic, database, query);
 		
 		if(!get_ok){
-			++log_msg_recv_fails;  // XXX doesn't separate monitoring/logging...
+			++multicast_msg_recv_fails;
 			return false;
 		}
 		
-		// FIXME for now both logging and monitoring go to daq database
-		if(topic=="logging"){
-			in_log_queue.emplace_back(query);
-			Log("Put client log message in queue: '"+query+"'",5);
-			
-		} else if(topic=="monitoring"){
-			in_monitoring_queue.emplace_back(query);
-			Log("Put client monitoring msg in queue: '"+query+"'",5);
+		// FIXME for now all messages go to daq database,
+		// probably need to make this a pair at least with first element a DB connection or name
+		if(topic=="logging" || topic=="monitoring" || topic=="rootplot"){
+			in_multicast_queue.emplace_back(query);
+			Log("Put "+topic+" msg in queue: '"+query+"'",5);
 			
 		} else {
 			// could not determine multicast type
-			Log(std::string{"Unable to parse multicast message '"}+message+"' of topic '"+topic+"'",v_error);
-			++log_msg_recv_fails;
+			Log(std::string{"Unrecognised topic '"}+topic+"' in multicast message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
 			return false;
 			
 		}
@@ -1355,6 +1388,7 @@ bool ReceiveSQL::GetMulticastMessages(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+// FIXME refactor to make code DRY
 bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out){
 	Log(Concat("Forming SQL for logging message: '",message,"'"),4);
 	
@@ -1363,14 +1397,21 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 	get_ok = parser.Parse(message, tmp);
 	if(!get_ok){
 		Log("MulticastMessageToQuery error parsing message json '"+message+"'",v_error);
+		++multicast_msg_recv_fails;
+		return false;
+	}
+	
+	get_ok = tmp.Get("topic",topic_out);
+	if(!get_ok){
+		++multicast_msg_recv_fails;
+		Log("MulticastMessageToQuery error, no topic in message '"+message+"'",v_error);
 		return false;
 	}
 	
 	// the JSON fields depend on the kind of data. Unlike writes we have no topic here,
 	// so we just need to use the JSON keys to identify what kind of data this is.
-	if(tmp.Has("message")){
+	if(topic_out=="logging"){
 		
-		topic_out = "logging";
 		db_out = "daq";
 		Postgres& a_database = m_databases.at(db_out);
 		
@@ -1386,6 +1427,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= tmp.Get("message",msg);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
 			return false;
 		}
 		
@@ -1394,6 +1436,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= a_database.pqxx_quote(msg, msg);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
 			return false;
 		}
 		
@@ -1401,23 +1444,8 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				timestring="now()";
-				// XXX perhaps for mutlicast messages as errors are not propagated back to sender,
-				// it's better to fallback to the assumption of now()?
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
 		sql_out = "INSERT INTO logging ( time, device, severity, message ) VALUES ( '"
@@ -1430,9 +1458,8 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		
 		return true;
 		
-	} else if(tmp.Has("data")){
-
-		topic_out = "monitoring";
+	} else if(topic_out=="monitoring"){
+		
 		db_out = "daq";
 		Postgres& a_database = m_databases.at(db_out);
 		
@@ -1446,6 +1473,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= tmp.Get("data",data);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
 			return false;
 		}
 		
@@ -1454,30 +1482,66 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= a_database.pqxx_quote(data, data);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
 			return false;
 		}
 		
 		std::string timestring;
-		if(timestamp==0){
-			timestring="now()";
-		} else {
-			timestring.resize(22, '\0');
-			struct tm* timeptr = gmtime((time_t*)&timestamp);
-			if(timeptr==0){
-				Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				return false; // we could fall back to now(), but we leave that decision to the user.
-			}
-			get_ok = strftime(timestring.data(), timestring.length(), "%F %T%Z", timeptr);
-			if(get_ok==0){
-				Log("strftime error converting unix time '"+std::to_string(timestamp)+"' to timestamp",v_error);
-				timestring="now()";   // XXX
-			}
-		}
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
 		sql_out = "INSERT INTO monitoring ( time, device, data ) VALUES ( '"
 		        + timestring + "',"
 		        + device     + ","
+		        + data       + ");";
+		
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),4);
+		
+		return true;
+		
+	} else if(topic_out=="rootplot"){
+	
+		db_out = "daq"; // FIXME move to monitoring db
+		Postgres& a_database = m_databases.at(db_out);
+		
+		// root plot in json
+		std::string plot_name;
+		//time_t timestamp{0};
+		uint32_t timestamp{0};
+		std::string data;
+		std::string draw_options;
+		tmp.Get("time",timestamp); // optional
+		get_ok = tmp.Get("plot_name",plot_name);
+		get_ok &= tmp.Get("data",data);
+		get_ok &= tmp.Get("draw_options",draw_options);
+		if(!get_ok){
+			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
+			return false;
+		}
+		
+		// SQL sanitization
+		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+		get_ok &= a_database.pqxx_quote(draw_options, draw_options);
+		get_ok &= a_database.pqxx_quote(data, data);
+		if(!get_ok){
+			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
+			++multicast_msg_recv_fails;
+			return false;
+		}
+		
+		std::string timestring;
+		get_ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
+		
+		// form into a suitable SQL query
+		// FIXME this needs to insert into a temporary root plots table
+		sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
+		        + timestring + "',"
+		        + plot_name  + ","
+		        + "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
+		        + draw_options  + ","
 		        + data       + ");";
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),4);
@@ -1732,59 +1796,29 @@ bool ReceiveSQL::RunNextReadQuery(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::RunNextLogMsg(){
+bool ReceiveSQL::RunNextMulticastMsg(){
 	
-	// insert our next log message, if we have one
-	if(in_log_queue.size()){
-		Log("Inserting next log message to DB: we have "+std::to_string(in_log_queue.size())
+	// insert our next fire-and-forget message, if we have one
+	if(in_multicast_queue.size()){
+		Log("Inserting next multicast message to DB: we have "+std::to_string(in_multicast_queue.size())
 		    +" messages to process",5);
 		
-		std::string next_msg = in_log_queue.front();
-		
-		std::string tablename = "logging";
+		std::string next_msg = in_multicast_queue.front();
 		get_ok = m_databases.at("daq").Query(next_msg);  // FIXME hard-coded db name
 		
 		if(not get_ok){
 			// something went wrong
 			std::cerr<<"Error inserting logmessage '"<<next_msg<<"' into database"<<std::endl;
 			// can't use Log or we end up in a circular loop
-			in_log_queue.pop_front();
+			in_multicast_queue.pop_front();
+			++in_multicast_failed;
 			return false;
 		}
 		
 		// remove the message from the queue
-		in_log_queue.pop_front();
+		in_multicast_queue.pop_front();
 		
 	} // else no log messages for now
-	
-	return true;
-}
-
-// ««-------------- ≪ °◇◆◇° ≫ --------------»»
-
-bool ReceiveSQL::RunNextMonitoringMsg(){
-	
-	// insert our next monitoring message, if we have one
-	if(in_monitoring_queue.size()){
-		Log("Inserting next monitoring message to DB: we have "+std::to_string(in_monitoring_queue.size())
-		    +" messages to process",5);
-		
-		std::string next_msg = in_monitoring_queue.front();
-		
-		std::string tablename = "monitoring";
-		get_ok = m_databases.at("daq").Query(next_msg);  // FIXME hard-coded db name
-		
-		if(not get_ok){
-			// something went wrong
-			Log("Error inserting logmessage '"+next_msg+"' into database",v_error);
-			in_monitoring_queue.pop_front();
-			return false;
-		}
-		
-		// remove the message from the queue
-		in_monitoring_queue.pop_front();
-		
-	} // else no monitoring messages for now
 	
 	return true;
 }
@@ -1891,6 +1925,7 @@ bool ReceiveSQL::SendNextLogMsg(){
 				std::string errmsg = "Error sending multicast message: "+std::string{strerror(errno)};
 				Log(errmsg,v_error);
 				out_log_queue.pop_front();
+				++log_send_fails;
 				return false;
 				
 			} else {
@@ -2013,15 +2048,12 @@ bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 	unsigned long* drop_count;
 	
 	// check which queue we're managing
-	if(queuename=="in_log_queue"){
-		queue = &in_log_queue;
-		drop_count = &dropped_logs_out;
+	if(queuename=="in_multicast_queue"){
+		queue = &in_multicast_queue;
+		drop_count = &dropped_multicast_in;
 	} else if(queuename=="out_log_queue"){
 		queue = &out_log_queue;
-		drop_count = &dropped_logs_in;
-	} else if(queuename=="in_monitoring_queue"){
-		queue = &in_monitoring_queue;
-		drop_count = &dropped_monitoring_in;
+		drop_count = &dropped_logs_out;
 	} else {
 		Log(Concat("TrimDequeue called with unknown message queue '",queuename,"'"),0);
 		return false;
@@ -2124,21 +2156,20 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("write_queries_waiting",wrt_txn_queue.size());
 		MonitoringStore.Set("read_queries_waiting",rd_txn_queue.size());
 		MonitoringStore.Set("replies_waiting",resp_queue.size());
-		MonitoringStore.Set("incoming_logs_waiting",in_log_queue.size());
-		MonitoringStore.Set("outgoing_log_waiting",out_log_queue.size());
-		MonitoringStore.Set("incoming_monitoring_waiting",in_monitoring_queue.size());
+		MonitoringStore.Set("incoming_multicastmsgs_waiting",in_multicast_queue.size());
+		MonitoringStore.Set("outgoing_logs_waiting",out_log_queue.size());
 		MonitoringStore.Set("cached_queries",cache.size());
 		MonitoringStore.Set("write_queries_recvd", write_queries_recvd);
 		MonitoringStore.Set("write_query_recv_fails", write_query_recv_fails);
 		MonitoringStore.Set("read_queries_recvd", read_queries_recvd);
 		MonitoringStore.Set("read_query_recv_fails", read_query_recv_fails);
-		MonitoringStore.Set("log_msgs_recvd", log_msgs_recvd);
-		MonitoringStore.Set("log_msg_recv_fails", log_msg_recv_fails);
+		MonitoringStore.Set("multicast_msgs_recvd", multicast_msgs_recvd);
+		MonitoringStore.Set("multicast_msg_recv_fails", multicast_msg_recv_fails);
 		MonitoringStore.Set("mm_broadcasts_recvd", mm_broadcasts_recvd);
 		MonitoringStore.Set("mm_broadcast_recv_fails", mm_broadcast_recv_fails);
 		MonitoringStore.Set("write_queries_failed", write_queries_failed);
 		MonitoringStore.Set("read_queries_failed", read_queries_failed);
-		MonitoringStore.Set("in_logs_failed", in_logs_failed);
+		MonitoringStore.Set("in_multicast_failed", in_multicast_failed);
 		MonitoringStore.Set("reps_sent", reps_sent);
 		MonitoringStore.Set("rep_send_fails", rep_send_fails);
 		MonitoringStore.Set("log_msgs_sent", log_msgs_sent);
@@ -2158,9 +2189,8 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("dropped_writes", dropped_writes);
 		MonitoringStore.Set("dropped_reads", dropped_reads);
 		MonitoringStore.Set("dropped_acks", dropped_acks);
-		MonitoringStore.Set("dropped_logs_in", dropped_logs_in);
+		MonitoringStore.Set("dropped_multicast_in", dropped_multicast_in);
 		MonitoringStore.Set("dropped_logs_out", dropped_logs_out);
-		MonitoringStore.Set("dropped_monitoring_in", dropped_monitoring_in);
 		MonitoringStore.Set("dropped_monitoring_out", dropped_monitoring_out);
 		MonitoringStore.Set("read_query_rate", read_query_rate);
 		MonitoringStore.Set("write_query_rate", write_query_rate);
@@ -2174,12 +2204,12 @@ bool ReceiveSQL::TrackStats(){
 		std::stringstream status;
 		status << "  r:["<<read_queries_recvd<<"|"<<read_query_recv_fails<<"|"<<read_queries_failed
 		       <<"]; w:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
-		       <<"]; l:["<<log_msgs_recvd<<"|"<<log_msg_recv_fails<<"|"<<in_logs_failed
+		       <<"]; l:["<<multicast_msgs_recvd<<"|"<<multicast_msg_recv_fails<<"|"<<in_multicast_failed
 		       <<"]; a:["<<reps_sent<<"|"<<rep_send_fails
-		       <<"]; d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_logs_in<<"|"<<dropped_acks
+		       <<"]; d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_multicast_in<<"|"<<dropped_acks
 		       <<"]";
 		SC_vars["Status"]->SetValue(status.str());
-
+		
 		/*
 		// temporarily bypass the database logging level to ensure it gets sent to the monitoring db.
 		int db_verbosity_tmp = db_verbosity;
@@ -2187,9 +2217,17 @@ bool ReceiveSQL::TrackStats(){
 		Log(Concat("Monitoring Stats:",json_stats),5);
 		db_verbosity = db_verbosity_tmp;
 		*/
-		std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
-		                    + my_id+"', '"+json_stats+"' );";
-		in_monitoring_queue.push_back(sql_qry);
+		if(am_master){
+			std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
+			                    + my_id+"', '"+json_stats+"' );";
+			in_multicast_queue.push_back(sql_qry);
+		} else {
+			std::string multicast_msg = "{ \"topic\":\"monitoring\""
+			                            ", \"device\":\""+escape_json(my_id)+"\", "
+			                          + ", \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
+			                          + ", \"data\":\""+json_stats+"\" }";
+			out_log_queue.push_back(multicast_msg);
+		}
 		
 		last_stats_calc = boost::posix_time::microsec_clock::universal_time();
 	}
@@ -2532,7 +2570,7 @@ bool ReceiveSQL::UpdateRole(){
 			
 			// drop any outstanding write messages
 			wrt_txn_queue.clear();
-			in_log_queue.clear();
+			in_multicast_queue.clear();
 			
 		} else {
 			
@@ -2640,6 +2678,40 @@ bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::TimeStringFromUnixMs(uint32_t timestamp, std::string& timestring){
+	
+	if(timestamp==0){
+		timestring="now()";
+	} else {
+		//std::cout<<"converting time "<<timestamp<<" to timestring"<<std::endl;
+		timestring.resize(22, '\0');
+		int timestamp_ms = timestamp%1000;
+		int timestamp_sec = timestamp*0.001;
+		struct tm* timeptr = gmtime((time_t*)&timestamp_sec);
+		//std::cout<<"timeptr is "<<timeptr<<std::endl;
+		if(timeptr==0){
+			Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to time struct",v_error);
+			return false; // we could fall back to now(), but we leave that decision to the user.
+		}
+		get_ok = strftime(const_cast<char*>(timestring.data()), timestring.length(), "%F %T%Z", timeptr);
+		if(get_ok==0){
+			Log("strftime error converting time struct '"+std::to_string(timestamp)+"' to string",v_error);
+			return false; // we could fall back to now(), but we leave that decision to the user.
+		}
+		// add back on the milliseconds
+		std::string timestring_ms(3,'\0');
+		int nchars = snprintf(const_cast<char*>(timestring_ms.data()), timestring_ms.length()+1, "%03d", timestamp_ms);
+		if(nchars!=3){
+			Log("snprintf error converting '"+std::to_string(timestamp_ms)+"' to timestamp milliseconds",v_error);
+			// just omit the milliseconds?
+		} else {
+			timestring = timestring.substr(0,19) + "." + timestring_ms + timestring.substr(19,std::string::npos);
+		}
+	}
+	return true;
+	
+}
 
 std::string ReceiveSQL::escape_json(std::string s){
 	// https://stackoverflow.com/a/27516892
@@ -2821,10 +2893,20 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 	
 	// log to database, if within database logging verbosity
 	if(message_severity < db_verbosity){
-		
 		// we'll either want to run this locally, or send it to the master, depending on our role
 		if(am_master){
 			// queue up for logging to our local monitoring database
+			if(m_databases.empty()){
+				// right now we only need the connection for sanitizing the message.
+				// i guess we could just implement our own sanitization function to call here,
+				// then we can put the message into the in_multicast_queue and have the lack of connection
+				// problem dealt with where it's more relevant (where the insertion actually takes place).
+				// ... but i'd rather not risk implementing a bad sanitization and having things
+				// go really wrong? Logging messages are probably not too bad to lose...
+				std::cerr<<"Log call for message '"<<message<<"' of severity "<<message_severity
+				         <<", db_verbosity "<<db_verbosity<<" but no db connection is open!"<<std::endl;
+				return false;
+			}
 			
 			// SQL sanitization
 			std::string msg;
@@ -2842,13 +2924,13 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			                   + std::to_string(message_severity) + ","
 			                   + msg                              + ");";
 			
-			in_log_queue.emplace_back(logmsg);
+			in_multicast_queue.emplace_back(logmsg);
 			
 		} else {
 			// add to the queue of logging messages to send to the master over ZMQ
 			
 			// form the required JSON
-			std::string logmsg = "{ \"time\":"+std::to_string(time(nullptr))
+			std::string logmsg = "{ \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
 			                   +", \"device\":\""+escape_json(my_id)+"\""
 			                   +", \"severity\":"+std::to_string(message_severity)
 			                   +", \"message\":\""+escape_json(message)+"\" }";
@@ -2856,7 +2938,7 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			out_log_queue.emplace_back(logmsg);
 		}
 		
-	} // else outside db logging verbosity
+	} // else outside db logging verbosity or no db to log to
 	
 	return true;
 }
