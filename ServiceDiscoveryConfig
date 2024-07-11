@@ -1,4 +1,0 @@
-broadcast_address 239.192.1.1
-broadcast_port 5000
-broadcast_period 5    # seconds
-kick_secs 30

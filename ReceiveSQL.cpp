@@ -543,7 +543,7 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	// -----------------
 	// to connect our listener ports to the clients discovered with the ServiceDiscovery class
 	// we can use a Utilities class
-	utilities = new Utilities(context);
+	utilities = new MMUtilities(context);
 	
 	// this lets us connect our listener socket to all clients advertising a given service with:
 	// Utilities::UpdateConnections({service_name}, {listener_socket}, {map_connections});
@@ -2603,16 +2603,17 @@ boost::posix_time::ptime ReceiveSQL::ToTimestamp(const std::string& timestring){
 	// convert postgres timestamp string to a timestamp we can compare
 	// postgres timestamps are in the format "2015-10-02 11:16:34.678267+01"
 	// the trailing "+01" is number of hours in local timezone relative to UTC
+	//printf("d1\n");
 	
 	// we can parse the string into a time variable using a std::tm struct
 	std::tm mytm = {0};
 	sscanf(timestring.c_str(),"%4d-%2d-%2d %2d:%2d:%2d",
 	       &mytm.tm_year, &mytm.tm_mon, &mytm.tm_mday, &mytm.tm_hour, &mytm.tm_min, &mytm.tm_sec);
-	
 	// months need correcting to 0-based indexing
 	--mytm.tm_mon;
 	// year needs correcting to 1900-based yearing
 	mytm.tm_year-=1900;
+	//printf("d2\n");
 	
 	// we can form the boost::ptime from this struct
 	return boost::posix_time::ptime_from_tm(mytm);
@@ -2623,6 +2624,8 @@ boost::posix_time::ptime ReceiveSQL::ToTimestamp(const std::string& timestring){
 
 // to insert boost timestamps we need to turn them into Postgres strings
 std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
+
+  //printf("b1\n");
 	
 	// convert boost timestamp to time struct
 	// postgres timestamps are *printed* in the format "2015-10-02 11:16:34.678267+01"
@@ -2647,7 +2650,7 @@ std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
 	        mytm.tm_hour,
 	        mytm.tm_min,
 	        mytm.tm_sec);
-	
+	//printf("b2\n");
 	return std::string(timestring);
 	
 }

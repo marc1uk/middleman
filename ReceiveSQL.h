@@ -9,7 +9,7 @@
 #include "BStore.h"
 // for finding clients
 #include "ServiceDiscovery.h"
-#include "Utilities.h"
+#include "MMUtilities.h"
 // for slow control over zmq SD port
 #include "SlowControlCollection.h"
 // for databse interaction
@@ -120,7 +120,7 @@ class ReceiveSQL{
 	// Service Discovery finds clients that are interested in our services
 	// and connect us to those sockets
 	ServiceDiscovery* service_discovery = nullptr;
-	Utilities* utilities = nullptr;
+	MMUtilities* utilities = nullptr;
 	// required by the Utilities class to keep track of connections to clients
 	// we should have one map per zmq_socket managed by the Utilities class;
 	// it uses this to determine if we are connected to a given client already
