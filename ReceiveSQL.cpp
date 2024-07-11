@@ -1087,6 +1087,63 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+bool ReceiveSQL::WritePlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+
+	std::string name, x, y, title, xlabel, ylabel, info;
+
+	get_ok = 1;
+
+	// initialize a variable with the plot slot
+#define get(slot) if (!plot.Get(#slot, slot)) goto fail_get
+	get(name);
+	get(x);
+	get(y);
+	get(title);
+	get(xlabel);
+	get(ylabel);
+	get(info);
+#undef get
+
+        // SQL sanitization
+#define quote(slot) if (!a_database.pqxx_quote(slot, slot)) goto fail_quote
+        quote(name);
+        quote(title);
+        quote(xlabel);
+        quote(ylabel);
+        quote(info);
+#undef quote
+
+	sql_out = "INSERT INTO plots (plot, x, y, title, xlabel, ylabel, info) VALUES ("
+		+ name   + ", "
+		+ x      + ", "
+		+ y      + ", "
+		+ title  + ", "
+		+ xlabel + ", "
+		+ ylabel + ", "
+		+ info   + ")"
+		" ON CONFLICT (plot) DO UPDATE "
+		" SET (x, y, title, xlabel, ylabel, info) = row("
+		"   EXCLUDED.x, EXCLUDED.y, EXCLUDED.title, EXCLUDED.xlabel, EXCLUDED.ylabel, EXCLUDED.info"
+		" );";
+
+	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
+
+	return true;
+
+fail_get:
+	get_ok = 0;
+	Log("WritePlotToQuery: missing fields in message '" + message + "'", v_error);
+	return false;
+fail_quote:
+	get_ok = 0;
+	Log("WritePlotToQuery: error quoting fields in message '" + message + "'", v_error);
+	return false;
+};
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
 bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
 	Log(Concat("Forming SQL for write query with topic: '",topic,"', message: '",message,"'"),4);
 	
@@ -1108,6 +1165,8 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		return WriteAlarmToQuery(message, store, db_out, sql_out);
 	if(topic=="ROOTPLOT")
 		return WriteRootPlotToQuery(message, store, db_out, sql_out);
+	if(topic=="PLOT")
+		return WritePlotToQuery(message, store, db_out, sql_out);
 	
 	Log("Error: unrecognised pub message topic: '"+topic+"'",v_error);
 	return false;
@@ -1338,6 +1397,34 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+bool ReceiveSQL::ReadPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out) {
+	db_out = "daq";
+	Postgres& a_database = m_databases.at(db_out);
+
+	// get the plot name
+	std::string name;
+	get_ok = request.Get("name",name);
+	if (!get_ok) {
+		Log("ReadPlotToQuery: missing the name field in message '" + message + "'", v_error);
+		return false;
+	}
+
+	// SQL sanitization
+	get_ok = a_database.pqxx_quote(name, name);
+	if (!get_ok) {
+		Log("ReadPlotToQuery: error quoting fields in message '" + message + "'", v_error);
+		return false;
+	}
+
+	sql_out = "SELECT x, y, title, xlabel, ylabel, info FROM plots WHERE plot = " + name + ";";
+
+	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
+
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
 bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
 	Log(Concat("Forming SQL for read query with topic: '",topic,"', message: '",message,"'"),4);
 	
@@ -1359,6 +1446,8 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 		return ReadCalibrationToQuery(message, request, db_out, sql_out);
 	if(topic=="ROOTPLOT")
 		return ReadRootPlotToQuery(message, request, db_out, sql_out);
+	if(topic=="PLOT")
+		return ReadPlotToQuery(message, request, db_out, sql_out);
 	
 	Log("Error: unrecognised read query type: '"+message+"'",v_error);
 	return false;
