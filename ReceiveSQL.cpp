@@ -885,12 +885,271 @@ std::cout<<"no write queries at input port"<<std::endl;
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+bool ReceiveSQL::WriteConfigToQuery(const std::string& message, BStore& config, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// make a new device config entry
+	//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
+	uint32_t timestamp{0}; // ms since unix epoch
+	std::string device;
+	std::string author;
+	std::string description;
+	std::string data;
+	get_ok = config.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+	get_ok  = config.Get("device",device);
+	get_ok &= config.Get("author",author);
+	get_ok &= config.Get("description",description);
+	get_ok &= config.Get("data",data);
+	if(!get_ok){
+		Log("WriteConfigToQuery: missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(device, device);
+	get_ok &= a_database.pqxx_quote(author, author);
+	get_ok &= a_database.pqxx_quote(description, description);
+	get_ok &= a_database.pqxx_quote(data, data);
+	if(!get_ok){
+		Log("WriteConfigToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// times are received in unix milliseconds since epoch, or 0 for 'now()'.
+	// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+	// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+	std::string timestring;
+	get_ok = TimeStringFromUnixMs(timestamp, timestring);
+	if(!get_ok) return false;
+	
+	sql_out = "INSERT INTO device_config (time, device, version, author, description, data) VALUES ( '"
+		+ timestring  + "',"
+		+ device      + ","
+		+ "(select COALESCE(MAX(version)+1,0) FROM device_config WHERE device="+device+"),"
+		+ author      + ","
+		+ description + ","
+		+ data        + ") returning version;";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::WriteCalibrationToQuery(const std::string& message, BStore& calibration, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// insert new calibration data
+	//time_t timestamp{0};
+	uint32_t timestamp{0};
+	std::string device;
+	std::string description;
+	std::string data;
+	calibration.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+	get_ok  = calibration.Get("device",device);
+	get_ok &= calibration.Get("description",description);
+	get_ok &= calibration.Get("data",data);
+	if(!get_ok){
+		Log("WriteCalibrationToQuery: missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(device, device);
+	get_ok &= a_database.pqxx_quote(description, description);
+	get_ok &= a_database.pqxx_quote(data, data);
+	if(!get_ok){
+		Log("WriteCalibrationToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// times are received in unix seconds since epoch, or 0 for 'now()'.
+	// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+	// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+	std::string timestring;
+	get_ok = TimeStringFromUnixMs(timestamp, timestring);
+	if(!get_ok) return false;
+	
+	sql_out = "INSERT INTO calibration (time, device, version, description, data) VALUES ( '"
+		+ timestring   + "',"
+		+ device       + ","
+		+ "(select COALESCE(MAX(version)+1,0) FROM calibration WHERE device="+device+"),"
+		+ description  + ","
+		+ data         + ") returning version;";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+	
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::WriteAlarmToQuery(const std::string& message, BStore& alarm, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// record a new alarm
+	//time_t timestamp{0};
+	uint32_t timestamp{0};
+	std::string device;
+	uint32_t level;
+	std::string msg;
+	alarm.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+	get_ok  = alarm.Get("device",device);
+	get_ok &= alarm.Get("level",level);
+	get_ok &= alarm.Get("message",msg);
+	if(!get_ok){
+		Log("WriteAlarmToQuery: missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(device, device);
+	get_ok &= a_database.pqxx_quote(msg, msg);
+	if(!get_ok){
+		Log("WriteAlarmToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// times are received in unix seconds since epoch, or 0 for 'now()'.
+	// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+	// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+	std::string timestring;
+	get_ok = TimeStringFromUnixMs(timestamp, timestring);
+	if(!get_ok) return false;
+	
+	sql_out = "INSERT INTO alarms (time, device, level, alarm) VALUES ( '"
+		+ timestring            + "',"
+		+ device                + ","
+		+ std::to_string(level) + ","
+		+ msg                   + ");";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+	
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// record a new persistent root plot
+	//time_t timestamp{0};
+	uint32_t timestamp{0};
+	std::string plot_name;
+	std::string draw_options;
+	std::string json_data;
+	plot.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+	get_ok  = plot.Get("plot_name",plot_name);
+	get_ok &= plot.Get("draw_options",draw_options);
+	get_ok &= plot.Get("data",json_data);
+	if(!get_ok){
+		Log("WriteRootPlotToQuery: missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+	get_ok &= a_database.pqxx_quote(draw_options, draw_options);
+	get_ok &= a_database.pqxx_quote(json_data, json_data);
+	if(!get_ok){
+		Log("WriteRootPlotToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// times are received in unix seconds since epoch, or 0 for 'now()'.
+	// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+	// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+	std::string timestring;
+	get_ok = TimeStringFromUnixMs(timestamp, timestring);
+	if(!get_ok) return false;
+	
+	// FIXME this needs to insert into a persistent root plots table
+	sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
+		+ timestring + "',"
+		+ plot_name  + ","
+		+ "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
+		+ draw_options  + ","
+		+ json_data       + ") returning version;";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+	
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::WritePlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+
+	std::string name, x, y, title, xlabel, ylabel, info;
+
+	get_ok = 1;
+
+	// initialize a variable with the plot slot
+#define get(slot) if (!plot.Get(#slot, slot)) goto fail_get
+	get(name);
+	get(x);
+	get(y);
+	get(title);
+	get(xlabel);
+	get(ylabel);
+	get(info);
+#undef get
+
+        // SQL sanitization
+#define quote(slot) if (!a_database.pqxx_quote(slot, slot)) goto fail_quote
+        quote(name);
+        quote(title);
+        quote(xlabel);
+        quote(ylabel);
+        quote(info);
+#undef quote
+
+	sql_out = "INSERT INTO plots (plot, x, y, title, xlabel, ylabel, info) VALUES ("
+		+ name   + ", "
+		+ x      + ", "
+		+ y      + ", "
+		+ title  + ", "
+		+ xlabel + ", "
+		+ ylabel + ", "
+		+ info   + ")"
+		" ON CONFLICT (plot) DO UPDATE "
+		" SET (x, y, title, xlabel, ylabel, info) = row("
+		"   EXCLUDED.x, EXCLUDED.y, EXCLUDED.title, EXCLUDED.xlabel, EXCLUDED.ylabel, EXCLUDED.info"
+		" );";
+
+	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
+
+	return true;
+
+fail_get:
+	get_ok = 0;
+	Log("WritePlotToQuery: missing fields in message '" + message + "'", v_error);
+	return false;
+fail_quote:
+	get_ok = 0;
+	Log("WritePlotToQuery: error quoting fields in message '" + message + "'", v_error);
+	return false;
+};
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
 bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
 	Log(Concat("Forming SQL for write query with topic: '",topic,"', message: '",message,"'"),4);
 	
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
-	BStore tmp;
-	get_ok = parser.Parse(message, tmp);
+	BStore store;
+	get_ok = parser.Parse(message, store);
 	if(!get_ok){
 		Log("WriteMessageToQuery error parsing message json '"+message+"'",v_error);
 		return false;
@@ -898,201 +1157,17 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 	
 	// the JSON fields depend on the kind of data; pub sockets include a 'topic'
 	// which we use to identify what kind of data this is.
-	if(topic=="CONFIG"){
-		
-		db_out = "daq"; // FIXME db
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// make a new device config entry
-		//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
-		uint32_t timestamp{0}; // ms since unix epoch
-		std::string device;
-		std::string author;
-		std::string description;
-		std::string data;
-		get_ok = tmp.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
-		get_ok  = tmp.Get("device",device);
-		get_ok &= tmp.Get("author",author);
-		get_ok &= tmp.Get("description",description);
-		get_ok &= tmp.Get("data",data);
-		if(!get_ok){
-			Log("WriteMessageToQuery: missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		get_ok &= a_database.pqxx_quote(author, author);
-		get_ok &= a_database.pqxx_quote(description, description);
-		get_ok &= a_database.pqxx_quote(data, data);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// times are received in unix milliseconds since epoch, or 0 for 'now()'.
-		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
-		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
-		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) return false;
-		
-		sql_out = "INSERT INTO device_config (time, device, version, author, description, data) VALUES ( '"
-		        + timestring  + "',"
-		        + device      + ","
-		        + "(select COALESCE(MAX(version)+1,0) FROM device_config WHERE device="+device+"),"
-		        + author      + ","
-		        + description + ","
-		        + data        + ") returning version;";
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-	}
+	if(topic=="CONFIG")
+		return WriteConfigToQuery(message, store, db_out, sql_out);
+	if(topic=="CALIBRATION")
+		return WriteCalibrationToQuery(message, store, db_out, sql_out);
+	if(topic=="ALARM")
+		return WriteAlarmToQuery(message, store, db_out, sql_out);
+	if(topic=="ROOTPLOT")
+		return WriteRootPlotToQuery(message, store, db_out, sql_out);
+	if(topic=="PLOT")
+		return WritePlotToQuery(message, store, db_out, sql_out);
 	
-	else if(topic=="CALIBRATION"){
-		
-		db_out = "daq"; // FIXME db
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// insert new calibration data
-		//time_t timestamp{0};
-		uint32_t timestamp{0};
-		std::string device;
-		std::string description;
-		std::string data;
-		tmp.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
-		get_ok  = tmp.Get("device",device);
-		get_ok &= tmp.Get("description",description);
-		get_ok &= tmp.Get("data",data);
-		if(!get_ok){
-			Log("WriteMessageToQuery: missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		get_ok &= a_database.pqxx_quote(description, description);
-		get_ok &= a_database.pqxx_quote(data, data);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// times are received in unix seconds since epoch, or 0 for 'now()'.
-		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
-		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
-		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) return false;
-		
-		sql_out = "INSERT INTO calibration (time, device, version, description, data) VALUES ( '"
-		        + timestring   + "',"
-		        + device       + ","
-		        + "(select COALESCE(MAX(version)+1,0) FROM calibration WHERE device="+device+"),"
-		        + description  + ","
-		        + data         + ") returning version;";
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-		
-	} else if(topic=="ALARM"){
-		
-		db_out = "daq"; // FIXME db
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// record a new alarm
-		//time_t timestamp{0};
-		uint32_t timestamp{0};
-		std::string device;
-		uint32_t level;
-		std::string msg;
-		tmp.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
-		get_ok  = tmp.Get("device",device);
-		get_ok &= tmp.Get("level",level);
-		get_ok &= tmp.Get("message",msg);
-		if(!get_ok){
-			Log("WriteMessageToQuery: missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		get_ok &= a_database.pqxx_quote(msg, msg);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// times are received in unix seconds since epoch, or 0 for 'now()'.
-		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
-		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
-		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) return false;
-		
-		sql_out = "INSERT INTO alarms (time, device, level, alarm) VALUES ( '"
-		        + timestring            + "',"
-		        + device                + ","
-		        + std::to_string(level) + ","
-		        + msg                   + ");";
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-		
-	} else if(topic=="ROOTPLOT"){
-		
-		db_out = "daq"; // FIXME db
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// record a new persistent root plot
-		//time_t timestamp{0};
-		uint32_t timestamp{0};
-		std::string plot_name;
-		std::string draw_options;
-		std::string json_data;
-		tmp.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
-		get_ok  = tmp.Get("plot_name",plot_name);
-		get_ok &= tmp.Get("draw_options",draw_options);
-		get_ok &= tmp.Get("data",json_data);
-		if(!get_ok){
-			Log("WriteMessageToQuery: missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
-		get_ok &= a_database.pqxx_quote(draw_options, draw_options);
-		get_ok &= a_database.pqxx_quote(json_data, json_data);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// times are received in unix seconds since epoch, or 0 for 'now()'.
-		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
-		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
-		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) return false;
-		
-		// FIXME this needs to insert into a persistent root plots table
-		sql_out = "INSERT INTO rootplots ( time, name, version, draw_options, data ) VALUES ( '"
-		        + timestring + "',"
-		        + plot_name  + ","
-		        + "(select COALESCE(MAX(version)+1,0) FROM rootplots WHERE name="+plot_name+"),"
-		        + draw_options  + ","
-		        + json_data       + ") returning version;";
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-		
-	}
-	
-	// if not caught by now:
 	Log("Error: unrecognised pub message topic: '"+topic+"'",v_error);
 	return false;
 	
@@ -1191,12 +1266,171 @@ std::cout<<"no read queries at input port"<<std::endl;
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+bool ReceiveSQL::ReadQueryToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	// this one's easy, the user has already given us a database and SQL statement
+	get_ok  = request.Get("database", db_out);
+	get_ok &= request.Get("query",sql_out);
+	if(!get_ok){
+		Log("ReadQueryToQuery missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::ReadConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	db_out = "daq";
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// get a new device config entry
+	std::string device;
+	int32_t version;
+	get_ok  = request.Get("device",device);
+	get_ok &= request.Get("version",version);
+	if(!get_ok){
+		return false;
+		Log("ReadConfigToQuery missing fields in message '"+message+"'",v_error);
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(device, device);
+	if(!get_ok){
+		Log("ReadConfigToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// if user requests version <0, give latest
+	std::string versionstring;
+	if(version<0){
+		versionstring = "(SELECT MAX(version) FROM device_config WHERE device="+device+")";
+	} else {
+		versionstring = std::to_string(version);
+	}
+	
+	sql_out = "SELECT data FROM device_config WHERE device="
+		+ device + " AND version="
+		+ versionstring+";";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	db_out = "daq";
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// get a calibration data entry
+	std::string device;
+	int32_t version;
+	get_ok  = request.Get("device",device);
+	get_ok &= request.Get("version",version);
+	if(!get_ok){
+		Log("ReadCalibrationToQuery missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(device, device);
+	if(!get_ok){
+		Log("ReadCalibrationToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// if user requests version <0, give latest
+	std::string versionstring;
+	if(version<0){
+		versionstring = "(SELECT MAX(version) FROM device_config WHERE device="+device+")";
+	} else {
+		versionstring = std::to_string(version);
+	}
+	
+	sql_out = "SELECT data FROM calibration WHERE device="
+		+ device + " AND version="
+		+ versionstring+";";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+	
+};
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	db_out = "daq";
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// get a ROOT plot entry
+	std::string plot_name;
+	int version=-1;
+	get_ok  = request.Get("plot_name",plot_name);
+	get_ok &= request.Get("version",version);
+	if(!get_ok){
+		Log("ReadRootPlotToQuery missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+	if(!get_ok){
+		Log("ReadRootPlotToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// FIXME this needs to know which rootplots table to read from
+	sql_out = "SELECT draw_options, time, version, data FROM rootplots WHERE name=" + plot_name;
+	if(version<0){
+		sql_out += " ORDER BY time DESC LIMIT 1;";
+	} else {
+		sql_out += " AND version=" + std::to_string(version);
+	}
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+	
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::ReadPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out) {
+	db_out = "daq";
+	Postgres& a_database = m_databases.at(db_out);
+
+	// get the plot name
+	std::string name;
+	get_ok = request.Get("name",name);
+	if (!get_ok) {
+		Log("ReadPlotToQuery: missing the name field in message '" + message + "'", v_error);
+		return false;
+	}
+
+	// SQL sanitization
+	get_ok = a_database.pqxx_quote(name, name);
+	if (!get_ok) {
+		Log("ReadPlotToQuery: error quoting fields in message '" + message + "'", v_error);
+		return false;
+	}
+
+	sql_out = "SELECT x, y, title, xlabel, ylabel, info FROM plots WHERE plot = " + name + ";";
+
+	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
+
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
 bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
 	Log(Concat("Forming SQL for read query with topic: '",topic,"', message: '",message,"'"),4);
 	
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
-	BStore tmp;
-	get_ok = parser.Parse(message, tmp);
+	BStore request;
+	get_ok = parser.Parse(message, request);
 	if(!get_ok){
 		Log("ReadMessageToQuery error parsing message json '"+message+"'",v_error);
 		return false;
@@ -1204,130 +1438,17 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 	
 	// the JSON fields depend on the kind of data.
 	// Use the topic to identify what kind of data this is.
-	if(topic=="QUERY"){
-		
-		// this one's easy, the user has already given us a database and SQL statement
-		get_ok  = tmp.Get("database", db_out);
-		get_ok &= tmp.Get("query",sql_out);
-		if(!get_ok){
-			Log("ReadMessageToQuery missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		return true;
-		
-	} else if(topic=="CONFIG"){
-		
-		db_out = "daq";
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// get a new device config entry
-		std::string device;
-		int32_t version;
-		get_ok  = tmp.Get("device",device);
-		get_ok &= tmp.Get("version",version);
-		if(!get_ok){
-			return false;
-			Log("ReadMessageToQuery missing fields in message '"+message+"'",v_error);
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// if user requests version <0, give latest
-		std::string versionstring;
-		if(version<0){
-			versionstring = "(SELECT MAX(version) FROM device_config WHERE device="+device+")";
-		} else {
-			versionstring = std::to_string(version);
-		}
-		
-		sql_out = "SELECT data FROM device_config WHERE device="
-		        + device + " AND version="
-		        + versionstring+";";
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-		
-	} else if(topic=="CALIBRATION"){
-		
-		db_out = "daq";
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// get a calibration data entry
-		std::string device;
-		int32_t version;
-		get_ok  = tmp.Get("device",device);
-		get_ok &= tmp.Get("version",version);
-		if(!get_ok){
-			Log("ReadMessageToQuery missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// if user requests version <0, give latest
-		std::string versionstring;
-		if(version<0){
-			versionstring = "(SELECT MAX(version) FROM device_config WHERE device="+device+")";
-		} else {
-			versionstring = std::to_string(version);
-		}
-		
-		sql_out = "SELECT data FROM calibration WHERE device="
-		        + device + " AND version="
-		        + versionstring+";";
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-		
-	} else if(topic=="ROOTPLOT"){
-		
-		db_out = "daq";
-		Postgres& a_database = m_databases.at(db_out);
-		
-		// get a ROOT plot entry
-		std::string plot_name;
-		int version=-1;
-		get_ok  = tmp.Get("plot_name",plot_name);
-		get_ok &= tmp.Get("version",version);
-		if(!get_ok){
-			Log("ReadMessageToQuery missing fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
-		if(!get_ok){
-			Log("WriteMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			return false;
-		}
-		
-		// FIXME this needs to know which rootplots table to read from
-		sql_out = "SELECT draw_options, time, version, data FROM rootplots WHERE name=" + plot_name;
-		if(version<0){
-			sql_out += " ORDER BY time DESC LIMIT 1;";
-		} else {
-			sql_out += " AND version=" + std::to_string(version);
-		}
-		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
-		
-		return true;
-		
-	}
+	if(topic=="QUERY")
+		return ReadQueryToQuery(message, request, db_out, sql_out);
+	if(topic=="CONFIG")
+		return ReadConfigToQuery(message, request, db_out, sql_out);
+	if(topic=="CALIBRATION")
+		return ReadCalibrationToQuery(message, request, db_out, sql_out);
+	if(topic=="ROOTPLOT")
+		return ReadRootPlotToQuery(message, request, db_out, sql_out);
+	if(topic=="PLOT")
+		return ReadPlotToQuery(message, request, db_out, sql_out);
 	
-	// if not caught by now:
 	Log("Error: unrecognised read query type: '"+message+"'",v_error);
 	return false;
 	
