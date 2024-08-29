@@ -573,7 +573,7 @@ bool ReceiveSQL::InitControls(Store& m_variables){
 	m_variables.Get("remote_control_poll_period", remote_control_poll_period);
 	
 	// the SlowControlCollection class runs a thread which communicates with RemoteControl services or webpages
-	SC_vars.InitThreadedReceiver(context, remote_control_port, remote_control_poll_period, false);
+	SC_vars.InitThreadedReceiver(context, remote_control_port, remote_control_poll_period, false, false);
 	
 	// internally SlowControlCollection retains a map of SlowControlElement objects.
 	// Each SlowControlElement has a type, which may be one of:
