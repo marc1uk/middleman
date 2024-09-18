@@ -252,7 +252,16 @@ bool Postgres::QueryAsJsons(std::string query, std::vector<std::string> *results
 		std::stringstream tmp;
 		tmp << "{";
 		for (pqxx::row::iterator it=row.begin(); it<row.end(); ){
-			tmp << "\"" << it->name() << "\":\""<< it->c_str() << "\"";
+			std::string tmpval = it->c_str();
+			// Field values are returned bare: i.e. '3' or 'cat' or '{"iam":"ajson"}'
+			// but to convert this into JSON, strings should be quoted:
+			// i.e. { "field1":3, "field2":"cat", "field3":{"iam":"ajson"} }
+			// this means we need to add enclosing quotes *only* for string fields
+			if((it->type()==18) || (it->type()==25) ||
+                           (it->type()==1042) || (it->type()==1043)){
+				tmpval = "\""+tmpval+"\"";
+			}
+			tmp << "\"" << it->name() << "\":"<< tmpval;
 			++it;
 			if(it!=row.end()) tmp << ", ";
 		}

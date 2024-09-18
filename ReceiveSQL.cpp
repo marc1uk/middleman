@@ -885,7 +885,7 @@ std::cout<<"no write queries at input port"<<std::endl;
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::WriteConfigToQuery(const std::string& message, BStore& config, std::string& db_out, std::string& sql_out){
+bool ReceiveSQL::WriteDeviceConfigToQuery(const std::string& message, BStore& config, std::string& db_out, std::string& sql_out){
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -902,7 +902,7 @@ bool ReceiveSQL::WriteConfigToQuery(const std::string& message, BStore& config, 
 	get_ok &= config.Get("description",description);
 	get_ok &= config.Get("data",data);
 	if(!get_ok){
-		Log("WriteConfigToQuery: missing fields in message '"+message+"'",v_error);
+		Log("WriteDeviceConfigToQuery: missing fields in message '"+message+"'",v_error);
 		return false;
 	}
 	
@@ -912,7 +912,7 @@ bool ReceiveSQL::WriteConfigToQuery(const std::string& message, BStore& config, 
 	get_ok &= a_database.pqxx_quote(description, description);
 	get_ok &= a_database.pqxx_quote(data, data);
 	if(!get_ok){
-		Log("WriteConfigToQuery: error quoting fields in message '"+message+"'",v_error);
+		Log("WriteDeviceConfigToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
 	}
 	
@@ -927,6 +927,59 @@ bool ReceiveSQL::WriteConfigToQuery(const std::string& message, BStore& config, 
 		+ timestring  + "',"
 		+ device      + ","
 		+ "(select COALESCE(MAX(version)+1,0) FROM device_config WHERE device="+device+"),"
+		+ author      + ","
+		+ description + ","
+		+ data        + ") returning version;";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::WriteRunConfigToQuery(const std::string& message, BStore& config, std::string& db_out, std::string& sql_out){
+	db_out = "daq"; // FIXME db
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// make a new device config entry
+	//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
+	uint32_t timestamp{0}; // ms since unix epoch
+	std::string name;
+	std::string description;
+	std::string author;
+	std::string data;
+	get_ok = config.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
+	get_ok &= config.Get("name",name);
+	get_ok &= config.Get("description",description);
+	get_ok &= config.Get("author",author);
+	get_ok &= config.Get("data",data);
+	if(!get_ok){
+		Log("WriteRunConfigToQuery: missing fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(name, name);
+	get_ok &= a_database.pqxx_quote(author, author);
+	get_ok &= a_database.pqxx_quote(description, description);
+	get_ok &= a_database.pqxx_quote(data, data);
+	if(!get_ok){
+		Log("WriteRunConfigToQuery: error quoting fields in message '"+message+"'",v_error);
+		return false;
+	}
+	
+	// times are received in unix milliseconds since epoch, or 0 for 'now()'.
+	// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+	// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+	std::string timestring;
+	get_ok = TimeStringFromUnixMs(timestamp, timestring);
+	if(!get_ok) return false;
+	
+	sql_out = "INSERT INTO configurations (time, name, version, author, description, data) VALUES ( '"
+		+ timestring  + "',"
+		+ name      + ","
+		+ "(select COALESCE(MAX(version)+1,0) FROM configurations WHERE name="+name+"),"
 		+ author      + ","
 		+ description + ","
 		+ data        + ") returning version;";
@@ -1157,8 +1210,10 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 	
 	// the JSON fields depend on the kind of data; pub sockets include a 'topic'
 	// which we use to identify what kind of data this is.
-	if(topic=="CONFIG")
-		return WriteConfigToQuery(message, store, db_out, sql_out);
+	if(topic=="DEVCONFIG")
+		return WriteDeviceConfigToQuery(message, store, db_out, sql_out);
+	if(topic=="RUNCONFIG")
+		return WriteRunConfigToQuery(message, store, db_out, sql_out);
 	if(topic=="CALIBRATION")
 		return WriteCalibrationToQuery(message, store, db_out, sql_out);
 	if(topic=="ALARM")
@@ -1279,7 +1334,7 @@ bool ReceiveSQL::ReadQueryToQuery(const std::string& message, BStore& request, s
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::ReadConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1290,13 +1345,13 @@ bool ReceiveSQL::ReadConfigToQuery(const std::string& message, BStore& request, 
 	get_ok &= request.Get("version",version);
 	if(!get_ok){
 		return false;
-		Log("ReadConfigToQuery missing fields in message '"+message+"'",v_error);
+		Log("ReadDeviceConfigToQuery missing fields in message '"+message+"'",v_error);
 	}
 	
 	// SQL sanitization
 	get_ok  = a_database.pqxx_quote(device, device);
 	if(!get_ok){
-		Log("ReadConfigToQuery: error quoting fields in message '"+message+"'",v_error);
+		Log("ReadDeviceConfigToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
 	}
 	
@@ -1308,9 +1363,70 @@ bool ReceiveSQL::ReadConfigToQuery(const std::string& message, BStore& request, 
 		versionstring = std::to_string(version);
 	}
 	
-	sql_out = "SELECT data FROM device_config WHERE device="
+	sql_out = "SELECT version, data FROM device_config WHERE device="
 		+ device + " AND version="
 		+ versionstring+";";
+	
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	db_out = "daq";
+	Postgres& a_database = m_databases.at(db_out);
+	
+	// get a run config entry
+	// the configurations table has fields 'config_id', 'name' and 'version' amongst others.
+	// it would seem sensible that users may query via a specific 'config_id'
+	// or via a pair of 'name' and 'version'
+	// first check for a specific config_id
+	int32_t config_id;
+	get_ok  = request.Get("config_id",config_id);
+	if(get_ok){
+		// if user requests id <0, give latest
+		std::string idstring;
+		if(config_id<0){
+			idstring = "(SELECT MAX(config_id) FROM configurations)";
+		} else {
+			idstring = std::to_string(config_id);
+		}
+		
+		sql_out = "SELECT data FROM configurations WHERE config_id="+idstring+";";
+		
+	} else {
+		
+		// if not given, see if there is a name and version number
+		std::string config_name;
+		int32_t version_num;
+		get_ok = request.Get("name",config_name);
+		get_ok = get_ok && request.Get("version",version_num);
+		if(!get_ok){
+			return false;
+			Log("ReadRunConfigToQuery missing fields in message '"+message+"'",v_error);
+		}
+		
+		// SQL sanitization
+		get_ok  = a_database.pqxx_quote(config_name, config_name);
+		if(!get_ok){
+			Log("ReadRunConfigToQuery: error quoting fields in message '"+message+"'",v_error);
+			return false;
+		}
+		
+		// if user requests version <0, give latest
+		std::string versionstring;
+		if(version_num<0){
+			versionstring = "(SELECT MAX(version) FROM configurations WHERE name="+config_name+")";
+		} else {
+			versionstring = std::to_string(version_num);
+		}
+		
+		sql_out = "SELECT version, data FROM configurations WHERE name="+config_name
+			+ " AND version="+ versionstring+";";
+		
+	}
 	
 	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
 	
@@ -1348,7 +1464,7 @@ bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& requ
 		versionstring = std::to_string(version);
 	}
 	
-	sql_out = "SELECT data FROM calibration WHERE device="
+	sql_out = "SELECT version, data FROM calibration WHERE device="
 		+ device + " AND version="
 		+ versionstring+";";
 	
@@ -1440,8 +1556,10 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 	// Use the topic to identify what kind of data this is.
 	if(topic=="QUERY")
 		return ReadQueryToQuery(message, request, db_out, sql_out);
-	if(topic=="CONFIG")
-		return ReadConfigToQuery(message, request, db_out, sql_out);
+	if(topic=="DEVCONFIG")
+		return ReadDeviceConfigToQuery(message, request, db_out, sql_out);
+	if(topic=="RUNCONFIG")
+		return ReadRunConfigToQuery(message, request, db_out, sql_out);
 	if(topic=="CALIBRATION")
 		return ReadCalibrationToQuery(message, request, db_out, sql_out);
 	if(topic=="ROOTPLOT")
@@ -1981,7 +2099,7 @@ bool ReceiveSQL::SendNextReply(){
 					              next_msg.message_id,
 					              next_msg.query_ok);
 				} catch(std::exception& e){
-					std::cerr<<"write caught "<<e.what()<<" sending with client id "<<client_str<<std::endl;
+					std::cerr<<"write caught "<<e.what()<<" sending with client id '"<<client_str<<"'"<<std::endl;
 					get_ok = false;
 				}
 			} else {
@@ -1993,7 +2111,7 @@ bool ReceiveSQL::SendNextReply(){
 					              next_msg.query_ok,
 					              next_msg.response);
 				} catch(std::exception& e){
-					std::cerr<<"read caught "<<e.what()<<" sending with client id "<<client_str<<std::endl;
+					std::cerr<<"read caught "<<e.what()<<" sending with client id '"<<client_str<<"'"<<std::endl;
 					get_ok=false;
 				}
 			}
