@@ -740,6 +740,14 @@ bool ReceiveSQL::FindNewClients_v2(){
 		   +" new write socket connections",v_debug);
 		Log("Made "+std::to_string(mm_rcv_connections.size()-mm_conns)
 		   +" new middleman socket connections",v_debug);
+		for(auto&& acon : clt_rtr_connections){
+			Log("Connection to "+acon.first+": ",v_debug);
+			acon.second->Print();
+		}
+		for(auto&& acon : clt_sub_connections){
+			Log("Connection to "+acon.first+": ",v_debug);
+			acon.second->Print();
+		}
 	} else {
 		Log("No new clients found",5);
 	}
@@ -891,7 +899,7 @@ bool ReceiveSQL::WriteDeviceConfigToQuery(const std::string& message, BStore& co
 	
 	// make a new device config entry
 	//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
-	uint32_t timestamp{0}; // ms since unix epoch
+	uint64_t timestamp{0}; // ms since unix epoch
 	std::string device;
 	std::string author;
 	std::string description;
@@ -944,7 +952,7 @@ bool ReceiveSQL::WriteRunConfigToQuery(const std::string& message, BStore& confi
 	
 	// make a new device config entry
 	//time_t timestamp{0}; // seems to end up with corrupt data even though BStore.Get returns OK
-	uint32_t timestamp{0}; // ms since unix epoch
+	uint64_t timestamp{0}; // ms since unix epoch
 	std::string name;
 	std::string description;
 	std::string author;
@@ -997,7 +1005,7 @@ bool ReceiveSQL::WriteCalibrationToQuery(const std::string& message, BStore& cal
 	
 	// insert new calibration data
 	//time_t timestamp{0};
-	uint32_t timestamp{0};
+	uint64_t timestamp{0};
 	std::string device;
 	std::string description;
 	std::string data;
@@ -1047,7 +1055,7 @@ bool ReceiveSQL::WriteAlarmToQuery(const std::string& message, BStore& alarm, st
 	
 	// record a new alarm
 	//time_t timestamp{0};
-	uint32_t timestamp{0};
+	uint64_t timestamp{0};
 	std::string device;
 	uint32_t level;
 	std::string msg;
@@ -1095,7 +1103,7 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 	
 	// record a new persistent root plot
 	//time_t timestamp{0};
-	uint32_t timestamp{0};
+	uint64_t timestamp{0};
 	std::string plot_name;
 	std::string draw_options;
 	std::string json_data;
@@ -1657,7 +1665,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		// logging message
 		std::string device;
 		//time_t timestamp{0};
-		uint32_t timestamp{0};
+		uint64_t timestamp{0};
 		uint32_t severity;
 		std::string msg;
 		get_ok = tmp.Get("time",timestamp); // optional
@@ -1705,7 +1713,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		// monitoring data
 		std::string device;
 		//time_t timestamp{0};
-		uint32_t timestamp{0};
+		uint64_t timestamp{0};
 		std::string data;
 		tmp.Get("time",timestamp); // optional
 		get_ok = tmp.Get("device",device);
@@ -1747,7 +1755,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		// root plot in json
 		std::string plot_name;
 		//time_t timestamp{0};
-		uint32_t timestamp{0};
+		uint64_t timestamp{0};
 		std::string data;
 		std::string draw_options;
 		tmp.Get("time",timestamp); // optional
@@ -2921,16 +2929,22 @@ bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TimeStringFromUnixMs(uint32_t timestamp, std::string& timestring){
+bool ReceiveSQL::TimeStringFromUnixSec(uint64_t timestamp, std::string& timestring){
+	return TimeStringFromUnixMs(timestamp*1000, timestring);
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::TimeStringFromUnixMs(uint64_t timestamp, std::string& timestring){
 	
 	if(timestamp==0){
 		timestring="now()";
 	} else {
 		//std::cout<<"converting time "<<timestamp<<" to timestring"<<std::endl;
-		timestring.resize(22, '\0');
+		timestring.resize(23, '\0');
 		int timestamp_ms = timestamp%1000;
-		int timestamp_sec = timestamp*0.001;
-		struct tm* timeptr = gmtime((time_t*)&timestamp_sec);
+		time_t timestamp_sec = timestamp*0.001;  // time_t is equivalent to uint64_t
+		struct tm* timeptr = gmtime(&timestamp_sec);
 		//std::cout<<"timeptr is "<<timeptr<<std::endl;
 		if(timeptr==0){
 			Log("gmtime error converting unix time '"+std::to_string(timestamp)+"' to time struct",v_error);
@@ -2950,6 +2964,7 @@ bool ReceiveSQL::TimeStringFromUnixMs(uint32_t timestamp, std::string& timestrin
 		} else {
 			timestring = timestring.substr(0,19) + "." + timestring_ms + timestring.substr(19,std::string::npos);
 		}
+		while(isspace(timestring.back()) || timestring.back()=='\0') timestring.pop_back();
 	}
 	return true;
 	

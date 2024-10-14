@@ -125,7 +125,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	// containing ints, floats, strings, bools, nulls or objects,
 	// but they can also be inhomogeneous combining elements of all these different types
 	// try to encapsulate the array in the minimal datatype required
-	std::vector<int>& theints = result.theints;
+	std::vector<int64_t>& theints = result.theints;
 	std::vector<double>& thefloats = result.thefloats;
 	std::vector<std::string>& thestrings = result.thestrings;
 	std::vector<int>& thebools = result.thebools;             // BStore doesn't support vector<bool>
@@ -261,7 +261,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		if(tmp.front()=='{' || tmp.front()=='['){
 			// found an object or array
 			// since inhomogeneous element types are valid, we could have already parsed
-			// several previous entries and built up e.g. a vector<int>. But now,
+			// several previous entries and built up e.g. a vector<int64_t>. But now,
 			// since we can't append an object to that vector, we need to translate those
 			// previosly parsed elements into a new vector<BStores> which is sufficiently
 			// generic to accommodate the new element as well
@@ -354,7 +354,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 			// try to parse as integer, until we find something that fails
 			try {
 				size_t endpos=0;
-				int nextint = std::stoi(tmp,&endpos);
+				int64_t nextint = std::stol(tmp,&endpos);
 				if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
 				if(verbose) std::cout<<"match int"<<std::endl;
 				theints.push_back(nextint);
@@ -368,7 +368,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 					std::cerr<<"parsing error; transferring ints into non-empty floats!"<<std::endl;
 					return false;
 				}
-				for(int& anint : theints) thefloats.push_back(anint);
+				for(int64_t& anint : theints) thefloats.push_back(anint);
 			}
 		}
 		if(all_floats){
@@ -511,7 +511,7 @@ bool JSONP::ScanJsonObjectPrimitive(std::string thejson, BStore& outstore){
 	try {
 		if(verbose) std::cout<<"try int"<<std::endl;
 		size_t endpos=0;
-		int nextint = std::stoi(thejson,&endpos);
+		int64_t nextint = std::stol(thejson,&endpos);
 		if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
 		outstore.Set("0",nextint);
 		return true;
@@ -736,7 +736,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			if(trytoparse){
 				try {
 					size_t endpos=0;
-					int nextint = std::stoi(tmp,&endpos);
+					int64_t nextint = std::stol(tmp,&endpos);
 					if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
 					outstore.Set(next_key,nextint);
 					trytoparse=false;
