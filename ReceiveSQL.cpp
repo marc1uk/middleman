@@ -115,7 +115,7 @@ bool ReceiveSQL::Execute(){
 	Log("Sending Next Client Response",4);
 	get_ok = SendNextReply();
 	Log("Sending Next Log Message",4);
-	get_ok = SendNextLogMsg();
+	get_ok = SendNextMulticast();
 	Log("Broadcasting Presence",4);
 	get_ok = BroadcastPresence();
 	
@@ -129,7 +129,7 @@ bool ReceiveSQL::Execute(){
 	Log("Trimming In Multicast Deque",4);
 	get_ok = TrimDequeue("in_multicast_queue");
 	Log("Trimming Out Logging Deque",4);
-	get_ok = TrimDequeue("out_log_queue");
+	get_ok = TrimDequeue("out_multicast_queue");
 	Log("Trimming Cache",4);
 	get_ok = TrimCache();
 	Log("Cleaning Up Old Cache Messages",4);
@@ -184,7 +184,7 @@ bool ReceiveSQL::Finalise(){
 	resp_queue.clear();
 	cache.clear();
 	in_multicast_queue.clear();
-	out_log_queue.clear();
+	out_multicast_queue.clear();
 	
 	Log("Deleting context",3);
 	//if(context){ delete context; context=nullptr; }
@@ -1590,14 +1590,14 @@ bool ReceiveSQL::GetMulticastMessages(){
 	// see if we had any multicast messages
 	if(in_polls.at(0).revents & ZMQ_POLLIN){
 		Log(">>> got a multicast message from client",4);
-		++multicast_msgs_recvd;
+		++multicasts_recvd;
 		
 		// read the messge
 		char message[655355]; // theoretical maximum UDP buffer size
 		int cnt = recvfrom(multicast_socket, message, sizeof(message), 0, (struct sockaddr*)&multicast_addr, &multicast_addrlen);
 		if(cnt <= 0){
 			Log(std::string{"Failed to receive on multicast socket with error '"}+strerror(errno)+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1610,7 +1610,7 @@ bool ReceiveSQL::GetMulticastMessages(){
 		get_ok = MulticastMessageToQuery(message, topic, database, query);
 		
 		if(!get_ok){
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1623,7 +1623,7 @@ bool ReceiveSQL::GetMulticastMessages(){
 		} else {
 			// could not determine multicast type
 			Log(std::string{"Unrecognised topic '"}+topic+"' in multicast message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 			
 		}
@@ -1644,13 +1644,13 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 	get_ok = parser.Parse(message, tmp);
 	if(!get_ok){
 		Log("MulticastMessageToQuery error parsing message json '"+message+"'",v_error);
-		++multicast_msg_recv_fails;
+		++multicast_recv_fails;
 		return false;
 	}
 	
 	get_ok = tmp.Get("topic",topic_out);
 	if(!get_ok){
-		++multicast_msg_recv_fails;
+		++multicast_recv_fails;
 		Log("MulticastMessageToQuery error, no topic in message '"+message+"'",v_error);
 		return false;
 	}
@@ -1674,7 +1674,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= tmp.Get("message",msg);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1683,7 +1683,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= a_database.pqxx_quote(msg, msg);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1720,7 +1720,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= tmp.Get("data",data);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1729,7 +1729,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= a_database.pqxx_quote(data, data);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1764,7 +1764,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= tmp.Get("draw_options",draw_options);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -1774,7 +1774,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		get_ok &= a_database.pqxx_quote(data, data);
 		if(!get_ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
-			++multicast_msg_recv_fails;
+			++multicast_recv_fails;
 			return false;
 		}
 		
@@ -2058,7 +2058,7 @@ bool ReceiveSQL::RunNextMulticastMsg(){
 			std::cerr<<"Error inserting logmessage '"<<next_msg<<"' into database"<<std::endl;
 			// can't use Log or we end up in a circular loop
 			in_multicast_queue.pop_front();
-			++in_multicast_failed;
+			++multicast_queries_failed;
 			return false;
 		}
 		
@@ -2156,29 +2156,29 @@ else {
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::SendNextLogMsg(){
+bool ReceiveSQL::SendNextMulticast(){
 	
 	// send next logging message to the master, if we have one in the queue
-	if(out_log_queue.size()){
+	if(out_multicast_queue.size()){
 		
 		// check we had a listener ready
 		if(out_polls.at(0).revents & ZMQ_POLLOUT){
 			
 			// OK to send! Get the message
-			std::string& message = out_log_queue.front();
+			std::string& message = out_multicast_queue.front();
 			
 			int cnt = sendto(multicast_socket, message.c_str(), message.length()+1, 0, (struct sockaddr*)&multicast_addr, multicast_addrlen);
 			if(cnt < 0){
 				std::string errmsg = "Error sending multicast message: "+std::string{strerror(errno)};
 				Log(errmsg,v_error);
-				out_log_queue.pop_front();
-				++log_send_fails;
+				out_multicast_queue.pop_front();
+				++multicast_send_fails;
 				return false;
 				
 			} else {
 				// sent successfully, remove from the to-send queue
-				out_log_queue.pop_front();
-				++log_msgs_sent;
+				out_multicast_queue.pop_front();
+				++multicasts_sent;
 				
 			} // end send ok check
 			
@@ -2255,7 +2255,7 @@ bool ReceiveSQL::TrimQueue(const std::string& queuename){
 	// check which queue we're managing
 	if(queuename=="response_queue"){
 		queue = &resp_queue;
-		drop_count = &dropped_acks;
+		drop_count = &dropped_resps;
 	} else if(queuename=="wrt_txn_queue"){
 		queue = &wrt_txn_queue;
 		drop_count = &dropped_writes;
@@ -2298,8 +2298,8 @@ bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 	if(queuename=="in_multicast_queue"){
 		queue = &in_multicast_queue;
 		drop_count = &dropped_multicast_in;
-	} else if(queuename=="out_log_queue"){
-		queue = &out_log_queue;
+	} else if(queuename=="out_multicast_queue"){
+		queue = &out_multicast_queue;
 		drop_count = &dropped_logs_out;
 	} else {
 		Log(Concat("TrimDequeue called with unknown message queue '",queuename,"'"),0);
@@ -2404,23 +2404,23 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("read_queries_waiting",rd_txn_queue.size());
 		MonitoringStore.Set("replies_waiting",resp_queue.size());
 		MonitoringStore.Set("incoming_multicastmsgs_waiting",in_multicast_queue.size());
-		MonitoringStore.Set("outgoing_logs_waiting",out_log_queue.size());
+		MonitoringStore.Set("out_multicasts_waiting",out_multicast_queue.size());
 		MonitoringStore.Set("cached_queries",cache.size());
 		MonitoringStore.Set("write_queries_recvd", write_queries_recvd);
 		MonitoringStore.Set("write_query_recv_fails", write_query_recv_fails);
 		MonitoringStore.Set("read_queries_recvd", read_queries_recvd);
 		MonitoringStore.Set("read_query_recv_fails", read_query_recv_fails);
-		MonitoringStore.Set("multicast_msgs_recvd", multicast_msgs_recvd);
-		MonitoringStore.Set("multicast_msg_recv_fails", multicast_msg_recv_fails);
+		MonitoringStore.Set("multicasts_recvd", multicasts_recvd);
+		MonitoringStore.Set("multicast_recv_fails", multicast_recv_fails);
 		MonitoringStore.Set("mm_broadcasts_recvd", mm_broadcasts_recvd);
 		MonitoringStore.Set("mm_broadcast_recv_fails", mm_broadcast_recv_fails);
 		MonitoringStore.Set("write_queries_failed", write_queries_failed);
+		MonitoringStore.Set("multicast_queries_failed", multicast_queries_failed);
 		MonitoringStore.Set("read_queries_failed", read_queries_failed);
-		MonitoringStore.Set("in_multicast_failed", in_multicast_failed);
 		MonitoringStore.Set("reps_sent", reps_sent);
 		MonitoringStore.Set("rep_send_fails", rep_send_fails);
-		MonitoringStore.Set("log_msgs_sent", log_msgs_sent);
-		MonitoringStore.Set("log_send_fails", log_send_fails);
+		MonitoringStore.Set("multicasts_sent", multicasts_sent);
+		MonitoringStore.Set("multicast_send_fails", multicast_send_fails);
 		MonitoringStore.Set("mm_broadcasts_sent", mm_broadcasts_sent);
 		MonitoringStore.Set("mm_broadcasts_failed", mm_broadcasts_failed);
 		MonitoringStore.Set("master_clashes", master_clashes);
@@ -2435,7 +2435,7 @@ bool ReceiveSQL::TrackStats(){
 		MonitoringStore.Set("demotions_failed", demotions_failed);
 		MonitoringStore.Set("dropped_writes", dropped_writes);
 		MonitoringStore.Set("dropped_reads", dropped_reads);
-		MonitoringStore.Set("dropped_acks", dropped_acks);
+		MonitoringStore.Set("dropped_resps", dropped_resps);
 		MonitoringStore.Set("dropped_multicast_in", dropped_multicast_in);
 		MonitoringStore.Set("dropped_logs_out", dropped_logs_out);
 		MonitoringStore.Set("dropped_monitoring_out", dropped_monitoring_out);
@@ -2449,11 +2449,11 @@ bool ReceiveSQL::TrackStats(){
 		// update the web page status
 		// actually, this only supports a single word, with no spaces?
 		std::stringstream status;
-		status << "  r:["<<read_queries_recvd<<"|"<<read_query_recv_fails<<"|"<<read_queries_failed
-		       <<"]; w:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
-		       <<"]; l:["<<multicast_msgs_recvd<<"|"<<multicast_msg_recv_fails<<"|"<<in_multicast_failed
-		       <<"]; a:["<<reps_sent<<"|"<<rep_send_fails
-		       <<"]; d:["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_multicast_in<<"|"<<dropped_acks
+		status << "  read qrys (rcvd/rcv errs/qry errs):["<<read_queries_recvd<<"|"<<read_query_recv_fails<<"|"<<read_queries_failed
+		       <<"]; write qrys:["<<write_queries_recvd<<"|"<<write_query_recv_fails<<"|"<<write_queries_failed
+		       <<"]; multicast qrys:["<<multicasts_recvd<<"|"<<multicast_recv_fails<<"|"<<multicast_queries_failed
+		       <<"]; replies (ok/err):["<<reps_sent<<"|"<<rep_send_fails
+		       <<"]; dropped (reads/writes/multicasts/resps):["<<dropped_reads<<"|"<<dropped_writes<<"|"<<dropped_multicast_in<<"|"<<dropped_resps
 		       <<"]";
 		SC_vars["Status"]->SetValue(status.str());
 		
@@ -2473,7 +2473,7 @@ bool ReceiveSQL::TrackStats(){
 			                            ", \"device\":\""+escape_json(my_id)+"\", "
 			                          + ", \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
 			                          + ", \"data\":\""+json_stats+"\" }";
-			out_log_queue.push_back(multicast_msg);
+			out_multicast_queue.push_back(multicast_msg);
 		}
 		
 		last_stats_calc = boost::posix_time::microsec_clock::universal_time();
@@ -3192,7 +3192,7 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			                   +", \"severity\":"+std::to_string(message_severity)
 			                   +", \"message\":\""+escape_json(message)+"\" }";
 			
-			out_log_queue.emplace_back(logmsg);
+			out_multicast_queue.emplace_back(logmsg);
 		}
 		
 	} // else outside db logging verbosity or no db to log to
