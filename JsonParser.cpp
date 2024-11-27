@@ -65,7 +65,7 @@ bool JSONP::Parse(std::string thejson, BStore& output){
 	// but we'll need to make up a key: we'll use simple index keys: "0"
 	// (this will also be true for nested arrays)
 	if(thejson.front()=='['){
-		JsonParserResult res;
+		JsonParserResult res(output.TypeChecking());
 		bool ok =  ScanJsonArray(thejson.substr(1,thejson.length()-2), res);
 		if(!ok || res.type==JsonParserResultType::undefined) return false;
 		switch (res.type){
@@ -271,27 +271,27 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 			all_bools=false;
 			all_nulls=false;
 			if(theints.size()){
-				thestores.resize(theints.size());
+				thestores.resize(theints.size(), BStore(false, result.typechecking));
 				for(int i=0; i<theints.size(); ++i) thestores.at(i).Set("0", theints.at(i));
 				theints.clear();
 			}
 			if(thefloats.size()){
-				thestores.resize(thefloats.size());
+				thestores.resize(thefloats.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thefloats.size(); ++i) thestores.at(i).Set("0", thefloats.at(i));
 				thefloats.clear();
 			}
 			if(thestrings.size()){
-				thestores.resize(thestrings.size());
+				thestores.resize(thestrings.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thestrings.size(); ++i) thestores.at(i).Set("0", thestrings.at(i));
 				thestrings.clear();
 			}
 			if(thebools.size()){
-				thestores.resize(thebools.size());
+				thestores.resize(thebools.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thebools.size(); ++i) thestores.at(i).Set("0", thebools.at(i));
 				thebools.clear();
 			}
 			if(thenulls.size()){
-				thestores.resize(thenulls.size());
+				thestores.resize(thenulls.size(), BStore(false, result.typechecking));
 				std::string emptystring="";
 				for(int i=0; i<thenulls.size(); ++i) thestores.at(i).Set("0", emptystring);
 				thenulls.clear();
@@ -299,15 +299,15 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		}
 		if(tmp.front()=='{'){
 			// add the new element
-			thestores.resize(thestores.size()+1);
+			thestores.resize(thestores.size()+1, BStore(false, result.typechecking));
 			bool ok =  ScanJsonObject(tmp.substr(1,tmp.length()-2), thestores.back());
 			if(!ok) return false;
 			continue;
 		}
 		if(tmp.front()=='['){
 			// add the new element
-			thestores.resize(thestores.size()+1);
-			JsonParserResult res;
+			thestores.resize(thestores.size()+1, BStore(false, result.typechecking));
+			JsonParserResult res(result.typechecking);
 			bool ok =  ScanJsonArray(tmp.substr(1,tmp.length()-2), res);
 			if(!ok || res.type==JsonParserResultType::undefined) return false;
 			switch (res.type){
@@ -390,7 +390,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 					std::cerr<<"parsing error; transferring floats into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thefloats.size());
+				thestores.resize(thefloats.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thefloats.size(); ++i){
 					thestores.at(i).Set("0", thefloats.at(i));
 				}
@@ -415,7 +415,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 					std::cerr<<"parsing error; transferring bools into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thestores.size());
+				thestores.resize(thestores.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thebools.size(); ++i){
 					thestores.at(i).Set("0", thebools.at(i));
 				}
@@ -436,7 +436,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 					std::cerr<<"parsing error; transferring nulls into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thenulls.size());
+				thestores.resize(thenulls.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thenulls.size(); ++i){
 					std::string emptystring="";
 					thestores.at(i).Set(std::to_string(i), emptystring);
@@ -460,7 +460,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 					std::cerr<<"parsing error; transferring nulls into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thestrings.size());
+				thestores.resize(thestrings.size(), BStore(false, result.typechecking));
 				for(int i=0; i<thestrings.size(); ++i){
 					thestores.at(i).Set("0",thestrings.at(i));
 				}
@@ -471,7 +471,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 			// build a BStore to encapsulate this element,
 			// but note that it's not an object or array, so we're just gonna
 			// have to make a BStore entry of the correct primitive type
-			thestores.resize(thestores.size()+1,BStore{typechecking});
+			thestores.resize(thestores.size()+1,BStore(false, result.typechecking));
 			bool ok = ScanJsonObjectPrimitive(tmp, thestores.back());
 			if(verbose) std::cout<<"returned "<<ok<<std::endl;
 			if(!ok) return false;
@@ -673,7 +673,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			bool trytoparse=true;
 			if(trytoparse && tmp.front()=='{'){
 				// add the new element
-				BStore res{typechecking};
+				BStore res(false, outstore.TypeChecking());
 				bool ok =  ScanJsonObject(tmp.substr(1,tmp.length()-2), res);
 				if(!ok) return false;
 				outstore.Set(next_key,res);
@@ -683,7 +683,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			if(trytoparse && tmp.front()=='['){
 				if(verbose) std::cout<<"it array"<<std::endl;
 				// add the new element
-				JsonParserResult res;
+				JsonParserResult res(outstore.TypeChecking());
 				bool ok =  ScanJsonArray(tmp.substr(1,tmp.length()-2), res);
 				if(verbose) std::cout<<"parse array ret:"<<ok<<std::endl;
 				if(!ok || res.type==JsonParserResultType::undefined) return false;
@@ -788,7 +788,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			}
 			if(verbose && trytoparse) std::cout<<"not string"<<std::endl;
 			if(trytoparse){
-				BStore astore{typechecking};
+				BStore astore(false, outstore.TypeChecking());
 				bool ok = ScanJsonObjectPrimitive(tmp, astore);
 				if(!ok) return false;
 				outstore.Set(next_key,astore);

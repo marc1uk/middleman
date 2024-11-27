@@ -1148,68 +1148,59 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::WritePlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out){
+bool ReceiveSQL::WritePlotlyPlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out) {
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 
-	std::string name, x, y, title, xlabel, ylabel, info;
+	std::string name;
+	std::string traces;
+	std::string layout;
+	int version = -1;
+	int64_t timestamp = 0;
+	get_ok  = plot.Get("name", name);
+	get_ok &= plot.JsonEncode("traces", traces);
+	get_ok &= plot.JsonEncode("layout", layout);
+	plot.Get("version", version);
+	plot.Get("timestamp", timestamp);
+	if (!get_ok) {
+		Log("WritePlotlyPlotToQuery: missing fields in message '" + message + "'", v_error);
+		return false;
+	}
 
-	get_ok = 1;
+	// SQL sanitization
+	get_ok  = a_database.pqxx_quote(name, name);
+	get_ok &= a_database.pqxx_quote(traces, traces);
+	get_ok &= a_database.pqxx_quote(layout, layout);
+	if (!get_ok) {
+		Log("WritePlotlyPlotToQuery: error quoting fields in message '" + message + "'", v_error);
+		return false;
+	}
 
-	// initialize a variable with the plot slot
-#define get(slot) if (!plot.Get(#slot, slot)) goto fail_get
-	get(name);
-	get(x);
-	get(y);
-	get(title);
-	get(xlabel);
-	get(ylabel);
-	get(info);
-#undef get
+	// times are received in unix milliseconds since epoch, or 0 for 'now()'.
+	// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
+	// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
+	std::string timestring;
+	get_ok = TimeStringFromUnixMs(timestamp, timestring);
+	if (!get_ok) return false;
 
-        // SQL sanitization
-#define quote(slot) if (!a_database.pqxx_quote(slot, slot)) goto fail_quote
-        quote(name);
-        quote(title);
-        quote(xlabel);
-        quote(ylabel);
-        quote(info);
-#undef quote
-
-	sql_out = "INSERT INTO plots (plot, x, y, title, xlabel, ylabel, info) VALUES ("
-		+ name   + ", "
-		+ x      + ", "
-		+ y      + ", "
-		+ title  + ", "
-		+ xlabel + ", "
-		+ ylabel + ", "
-		+ info   + ")"
-		" ON CONFLICT (plot) DO UPDATE "
-		" SET (x, y, title, xlabel, ylabel, info) = row("
-		"   EXCLUDED.x, EXCLUDED.y, EXCLUDED.title, EXCLUDED.xlabel, EXCLUDED.ylabel, EXCLUDED.info"
-		" );";
-
+	sql_out = "INSERT INTO plotlyplots ( name, time, version, traces, layout ) VALUES ( "
+		+ name + ",'"
+		+ timestring + "',"
+		+ "(select COALESCE(MAX(version) + 1, 0) FROM plotlyplots where name = " + name + "),"
+		+ traces + ","
+		+ layout + ") returning version;";
 	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
 
 	return true;
-
-fail_get:
-	get_ok = 0;
-	Log("WritePlotToQuery: missing fields in message '" + message + "'", v_error);
-	return false;
-fail_quote:
-	get_ok = 0;
-	Log("WritePlotToQuery: error quoting fields in message '" + message + "'", v_error);
-	return false;
-};
+}
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
 	Log(Concat("Forming SQL for write query with topic: '",topic,"', message: '",message,"'"),4);
-	
+
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
-	BStore store;
+	BStore store(false, true);
 	get_ok = parser.Parse(message, store);
 	if(!get_ok){
 		Log("WriteMessageToQuery error parsing message json '"+message+"'",v_error);
@@ -1228,8 +1219,8 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 		return WriteAlarmToQuery(message, store, db_out, sql_out);
 	if(topic=="ROOTPLOT")
 		return WriteRootPlotToQuery(message, store, db_out, sql_out);
-	if(topic=="PLOT")
-		return WritePlotToQuery(message, store, db_out, sql_out);
+	if(topic=="PLOTLYPLOT")
+		return WritePlotlyPlotToQuery(message, store, db_out, sql_out);
 	
 	Log("Error: unrecognised pub message topic: '"+topic+"'",v_error);
 	return false;
@@ -1521,26 +1512,32 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::ReadPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out) {
+bool ReceiveSQL::ReadPlotlyPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out) {
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 
-	// get the plot name
 	std::string name;
-	get_ok = request.Get("name",name);
+	int version = -1;
+	get_ok = request.Get("name", name);
+	request.Get("version", version);
 	if (!get_ok) {
-		Log("ReadPlotToQuery: missing the name field in message '" + message + "'", v_error);
+		Log("ReadPlotlyPlotToQuery: missing fields in message '" + message + "'", v_error);
 		return false;
 	}
 
 	// SQL sanitization
 	get_ok = a_database.pqxx_quote(name, name);
 	if (!get_ok) {
-		Log("ReadPlotToQuery: error quoting fields in message '" + message + "'", v_error);
+		Log("ReadPlotlyPlotToQuery: error quoting fields in message '" + message + "'", v_error);
 		return false;
 	}
 
-	sql_out = "SELECT x, y, title, xlabel, ylabel, info FROM plots WHERE plot = " + name + ";";
+	sql_out = "SELECT version, traces, layout, time FROM plotlyplots WHERE name = " + name;
+	if (version < 0) {
+		sql_out += " ORDER BY time DESC LIMIT 1;";
+	} else {
+		sql_out += " AND version = " + std::to_string(version);
+	}
 
 	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
 
@@ -1572,8 +1569,8 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 		return ReadCalibrationToQuery(message, request, db_out, sql_out);
 	if(topic=="ROOTPLOT")
 		return ReadRootPlotToQuery(message, request, db_out, sql_out);
-	if(topic=="PLOT")
-		return ReadPlotToQuery(message, request, db_out, sql_out);
+	if(topic=="PLOTLYPLOT")
+		return ReadPlotlyPlotToQuery(message, request, db_out, sql_out);
 	
 	Log("Error: unrecognised read query type: '"+message+"'",v_error);
 	return false;

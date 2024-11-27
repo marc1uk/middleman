@@ -393,7 +393,7 @@ class ReceiveSQL{
 	bool WriteCalibrationToQuery(const std::string& message, BStore& calibration, std::string& db_out, std::string& sql_out);
 	bool WriteAlarmToQuery(const std::string& message, BStore& alarm, std::string& db_out, std::string& sql_out);
 	bool WriteRootPlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out);
-	bool WritePlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out);
+	bool WritePlotlyPlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out);
 
 	// implementations of ReadMessageToQuery for different message kinds
 	bool ReadQueryToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out);
@@ -401,7 +401,7 @@ class ReceiveSQL{
 	bool ReadRunConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out);
 	bool ReadCalibrationToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out);
 	bool ReadRootPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out);
-	bool ReadPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out);
+	bool ReadPlotlyPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out);
 };
 
 #endif

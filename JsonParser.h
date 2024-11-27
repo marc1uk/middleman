@@ -17,6 +17,9 @@ struct JsonParserResult {
 	std::vector<std::string> thenulls{};
 	std::vector<BStore> thestores{};
 	JsonParserResultType type=JsonParserResultType::undefined;
+	bool typechecking;
+	
+	JsonParserResult(bool typechecking): typechecking(typechecking) {};
 };
 
 class JSONP {
@@ -34,7 +37,6 @@ class JSONP {
 	bool ScanJsonObjectPrimitive(std::string thejson, BStore& outstore);
 	bool ScanJsonObject(std::string thejson, BStore& outstore);
 	int verbose=0;
-	bool typechecking=false;
 	
 };
 #endif
