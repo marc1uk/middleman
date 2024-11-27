@@ -10,7 +10,7 @@ using namespace ToolFramework; // for BStore
 
 enum class JsonParserResultType { ints, floats, strings, bools, nulls, stores, empty, undefined };
 struct JsonParserResult {
-	std::vector<int> theints{};
+	std::vector<int64_t> theints{};
 	std::vector<double> thefloats{};
 	std::vector<std::string> thestrings{};
 	std::vector<int> thebools{};
