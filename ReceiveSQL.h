@@ -217,6 +217,11 @@ class ReceiveSQL{
 	boost::posix_time::time_duration elapsed_time;
 	
 	// Monitoring stats.
+	// min, max time the Execute call took since last TrackStats call
+	double min_loop_ms=99999999;
+	double max_loop_ms=0;
+	// number of loops between TrackStats call
+	double loops=0;
 	// number of messages received over zmq sockets, and how many failed.
 	unsigned long write_queries_recvd = 0;
 	unsigned long write_query_recv_fails = 0;
