@@ -65,12 +65,16 @@ bool JSONP::Parse(std::string thejson, BStore& output){
 	// but we'll need to make up a key: we'll use simple index keys: "0"
 	// (this will also be true for nested arrays)
 	if(thejson.front()=='['){
-		JsonParserResult res(output.TypeChecking());
+		JsonParserResult res;
 		bool ok =  ScanJsonArray(thejson.substr(1,thejson.length()-2), res);
 		if(!ok || res.type==JsonParserResultType::undefined) return false;
 		switch (res.type){
-			case JsonParserResultType::ints: {
-				output.Set("0",res.theints);
+			case JsonParserResultType::sints: {
+				output.Set("0",res.thesints);
+				break;
+			}
+			case JsonParserResultType::uints: {
+				output.Set("0",res.theuints);
 				break;
 			}
 			case JsonParserResultType::floats: {
@@ -125,19 +129,22 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	// containing ints, floats, strings, bools, nulls or objects,
 	// but they can also be inhomogeneous combining elements of all these different types
 	// try to encapsulate the array in the minimal datatype required
-	std::vector<int64_t>& theints = result.theints;
+	std::vector<int64_t>& thesints = result.thesints;
+	std::vector<uint64_t>& theuints = result.theuints;
 	std::vector<double>& thefloats = result.thefloats;
 	std::vector<std::string>& thestrings = result.thestrings;
 	std::vector<int>& thebools = result.thebools;             // BStore doesn't support vector<bool>
 	std::vector<std::string>& thenulls = result.thenulls;     // BStore doesn't support vector<nullptr_t>
-	std::vector<BStore>& thestores = result.thestores;    // FIXME rather than a vector<BStore>
+	std::vector<BStore>& thestores = result.thestores;        // FIXME rather than a vector<BStore>
+	BStore thestore;
 	// it would be better to use a BStore of BStores, where each element's key is its index TODO
 	// we just need to track the index in case we aren't filling a vector
 	
 	// we'll use a set of flags while parsing to select how we try to
 	// interpret the next element. As each type gets ruled out we'll
 	// skip trying that interpretation for further elements
-	bool all_ints=true;
+	bool all_sints=true;
+	bool all_uints=true;
 	bool all_floats=true;
 	bool all_strings=true;
 	bool all_bools=true;
@@ -149,7 +156,8 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	if(thejson.find('"')!=std::string::npos){
 		if(verbose) std::cout<<"found quote: can't be ints, floats, bools or nulls"<<std::endl;
 		// not numeric, bool or null
-		all_ints=false;
+		all_sints=false;
+		all_uints=false;
 		all_floats=false;
 		all_bools=false;
 		all_nulls=false;
@@ -163,7 +171,8 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	// we can also rule out integers, bools and nulls by the presence of a '.' character
 	else if(thejson.find('.')!=std::string::npos){
 		if(verbose) std::cout<<"found full stop: can't be ints, bools or nulls"<<std::endl;
-		all_ints=false;
+		all_sints=false;
+		all_uints=false;
 		all_bools=false;
 		all_nulls=false;
 		// could be floats or strings, or arrays or objects
@@ -171,7 +180,8 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	// rule out integers by anything other than digits and signs
 	if(thejson.find_first_not_of("01234567890+-, ")!=std::string::npos){
 		if(verbose) std::cout<<"found something other than digits: can't be ints"<<std::endl;
-		all_ints=false;
+		all_sints=false;
+		all_uints=false;
 	}
 	// rule out doubles by anything other than numbers, signs and scientific notation characters
 	if(thejson.find_first_not_of("0123456789+-.Ee^*, ")!=std::string::npos){
@@ -191,7 +201,8 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	// (otherwise these could potentially just be characters within the strings)
 	if(all_strings==false && thejson.substr(1,thejson.length()-2).find("{}[]:")!=std::string::npos){
 		if(verbose) std::cout<<"can't be strings and has delimiters; must be array or object"<<std::endl;
-		all_ints=false;
+		all_sints=false;
+		all_uints=false;
 		all_floats=false;
 		all_strings=false;
 		all_bools=false;
@@ -265,33 +276,40 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 			// since we can't append an object to that vector, we need to translate those
 			// previosly parsed elements into a new vector<BStores> which is sufficiently
 			// generic to accommodate the new element as well
-			all_ints=false;
+			all_sints=false;
+			all_uints=false;
 			all_floats=false;
 			all_strings=false;
 			all_bools=false;
 			all_nulls=false;
-			if(theints.size()){
-				thestores.resize(theints.size(), BStore(false, result.typechecking));
-				for(int i=0; i<theints.size(); ++i) thestores.at(i).Set("0", theints.at(i));
-				theints.clear();
+			
+			if(thesints.size()){
+				thestores.resize(thesints.size(), BStore(false, false));
+				for(int i=0; i<thesints.size(); ++i) thestores.at(i).Set("0", thesints.at(i));
+				thesints.clear();
+			}
+			if(theuints.size()){
+				thestores.resize(theuints.size(), BStore(false, false));
+				for(int i=0; i<theuints.size(); ++i) thestores.at(i).Set("0", theuints.at(i));
+				theuints.clear();
 			}
 			if(thefloats.size()){
-				thestores.resize(thefloats.size(), BStore(false, result.typechecking));
+				thestores.resize(thefloats.size(), BStore(false, false));
 				for(int i=0; i<thefloats.size(); ++i) thestores.at(i).Set("0", thefloats.at(i));
 				thefloats.clear();
 			}
 			if(thestrings.size()){
-				thestores.resize(thestrings.size(), BStore(false, result.typechecking));
+				thestores.resize(thestrings.size(), BStore(false, false));
 				for(int i=0; i<thestrings.size(); ++i) thestores.at(i).Set("0", thestrings.at(i));
 				thestrings.clear();
 			}
 			if(thebools.size()){
-				thestores.resize(thebools.size(), BStore(false, result.typechecking));
+				thestores.resize(thebools.size(), BStore(false, false));
 				for(int i=0; i<thebools.size(); ++i) thestores.at(i).Set("0", thebools.at(i));
 				thebools.clear();
 			}
 			if(thenulls.size()){
-				thestores.resize(thenulls.size(), BStore(false, result.typechecking));
+				thestores.resize(thenulls.size(), BStore(false, false));
 				std::string emptystring="";
 				for(int i=0; i<thenulls.size(); ++i) thestores.at(i).Set("0", emptystring);
 				thenulls.clear();
@@ -299,20 +317,24 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		}
 		if(tmp.front()=='{'){
 			// add the new element
-			thestores.resize(thestores.size()+1, BStore(false, result.typechecking));
+			thestores.resize(thestores.size()+1, BStore(false, false));
 			bool ok =  ScanJsonObject(tmp.substr(1,tmp.length()-2), thestores.back());
 			if(!ok) return false;
 			continue;
 		}
 		if(tmp.front()=='['){
 			// add the new element
-			thestores.resize(thestores.size()+1, BStore(false, result.typechecking));
-			JsonParserResult res(result.typechecking);
+			thestores.resize(thestores.size()+1, BStore(false, false));
+			JsonParserResult res;
 			bool ok =  ScanJsonArray(tmp.substr(1,tmp.length()-2), res);
 			if(!ok || res.type==JsonParserResultType::undefined) return false;
 			switch (res.type){
-				case JsonParserResultType::ints: {
-					thestores.back().Set("0",res.theints);
+				case JsonParserResultType::sints: {
+					thestores.back().Set("0",res.thesints);
+					break;
+				}
+				case JsonParserResultType::uints: {
+					thestores.back().Set("0",res.theuints);
 					break;
 				}
 				case JsonParserResultType::floats: {
@@ -349,26 +371,62 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		}
 		
 		// ok not an object or array, try to handle it as a simpler type
-		if(all_ints){
-			if(verbose) std::cout<<"trying int"<<std::endl;
-			// try to parse as integer, until we find something that fails
+		if(all_uints){
+			if(verbose) std::cout<<"trying unsigned int"<<std::endl;
+			// try to parse as unsigned integer, until we find something that fails
+			try {
+				// discard leading whitespace
+				size_t startpos=0;
+				size_t endpos=0;
+				while(startpos<tmp.length() && std::isspace(tmp[startpos])) ++startpos;
+				if(tmp.front()=='-'){
+					throw std::invalid_argument("not unsigned");
+				} else {
+					// else try to scan into uint64_t
+					uint64_t nextint = std::stoull(tmp,&endpos);
+					if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+					if(verbose) std::cout<<"match uint"<<std::endl;
+					theuints.push_back(nextint);
+					continue;
+				}
+			}
+			catch(std::invalid_argument& e){
+				// swap any already parsed integers to the signed integer array
+				if(verbose){ std::cout<<"shifting unsigned ints to signed ints"<<std::endl; }
+				if(theuints.size() && thesints.size()){
+					// sanity check: shouldn't ever happen
+					std::cerr<<"parsing error; transferring unsigned ints into non-empty ints!"<<std::endl;
+					return false;
+				}
+				for(uint64_t& anint : theuints) thesints.push_back(anint);
+				theuints.clear();
+				all_uints = false;
+				all_sints = true;
+			}
+		}
+		if(all_sints){
+			if(verbose) std::cout<<"trying signed int"<<std::endl;
+			// try to parse as signed integer, until we find something that fails
 			try {
 				size_t endpos=0;
-				int64_t nextint = std::stol(tmp,&endpos);
+				int64_t nextint = std::stoll(tmp,&endpos);
 				if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
-				if(verbose) std::cout<<"match int"<<std::endl;
-				theints.push_back(nextint);
+				if(verbose) std::cout<<"match sint"<<std::endl;
+				thesints.push_back(nextint);
 				continue;
 			}
 			catch(std::invalid_argument& e){
-				all_ints = false;
-				// swap any already parsed integers to the float array
-				if(theints.size() && thefloats.size()){
+				// swap any already parsed integers to the signed integer array
+				if(verbose){ std::cout<<"shifting signed ints to floats"<<std::endl; }
+				if(theuints.size() && thesints.size()){
 					// sanity check: shouldn't ever happen
-					std::cerr<<"parsing error; transferring ints into non-empty floats!"<<std::endl;
+					std::cerr<<"parsing error; transferring signed ints into non-empty floats!"<<std::endl;
 					return false;
 				}
-				for(int64_t& anint : theints) thefloats.push_back(anint);
+				for(int64_t& anint : thesints) thefloats.push_back(anint);
+				thesints.clear();
+				all_sints = false;
+				all_floats = true;
 			}
 		}
 		if(all_floats){
@@ -383,17 +441,21 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 				continue;
 			}
 			catch(std::invalid_argument& e){
-				all_floats = false;
 				// must be inhomogeneous types. transfer to stores
+				// FIXME can't this just be one store? why multiple? FIXME FIXME FIXME
+				if(verbose){ std::cout<<"shifting floats to stores"<<std::endl; }
 				if(thefloats.size() && thestores.size()){
 					// sanity check: shouldn't ever happen
 					std::cerr<<"parsing error; transferring floats into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thefloats.size(), BStore(false, result.typechecking));
+				thestores.resize(thefloats.size(), BStore(false, false));
 				for(int i=0; i<thefloats.size(); ++i){
 					thestores.at(i).Set("0", thefloats.at(i));
 				}
+				thefloats.clear();
+				all_floats = false;
+				all_stores = true;
 			}
 		}
 		if(all_bools){
@@ -408,17 +470,20 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 				continue;
 			} else {
 				// not all bools
-				all_bools=false;
+				if(verbose){ std::cout<<"shifting bools to stores"<<std::endl; }
 				// transfer current contents to Store
 				if(thebools.size() && thestores.size()){
 					// sanity check: shouldn't ever happen
 					std::cerr<<"parsing error; transferring bools into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thestores.size(), BStore(false, result.typechecking));
+				thestores.resize(thestores.size(), BStore(false, false));
 				for(int i=0; i<thebools.size(); ++i){
 					thestores.at(i).Set("0", thebools.at(i));
 				}
+				thebools.clear();
+				all_bools = false;
+				all_stores = true;
 			}
 		}
 		if(all_nulls){
@@ -429,18 +494,21 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 				continue;
 			} else {
 				// not all nulls
-				all_nulls=false;
+				if(verbose){ std::cout<<"shifting nulls to stores"<<std::endl; }
 				// transfer current contents to Store
 				if(thenulls.size() && thestores.size()){
 					// sanity check: shouldn't ever happen
 					std::cerr<<"parsing error; transferring nulls into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thenulls.size(), BStore(false, result.typechecking));
+				thestores.resize(thenulls.size(), BStore(false, false));
 				for(int i=0; i<thenulls.size(); ++i){
 					std::string emptystring="";
 					thestores.at(i).Set(std::to_string(i), emptystring);
 				}
+				thenulls.clear();
+				all_nulls = false;
+				all_stores = true;
 			}
 		}
 		if(all_strings){
@@ -453,17 +521,20 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 				continue;
 			} else {
 				// doesn't look like a json string. need to use stores
-				all_strings=false;
+				if(verbose){ std::cout<<"shifting strings to stores"<<std::endl; }
 				// transfer current contents to Stores
 				if(thestrings.size() && thestores.size()){
 					// sanity check: shouldn't ever happen
 					std::cerr<<"parsing error; transferring nulls into non-empty stores!"<<std::endl;
 					return false;
 				}
-				thestores.resize(thestrings.size(), BStore(false, result.typechecking));
+				thestores.resize(thestrings.size(), BStore(false, false));
 				for(int i=0; i<thestrings.size(); ++i){
 					thestores.at(i).Set("0",thestrings.at(i));
 				}
+				thestrings.clear();
+				all_strings = false;
+				all_stores = true;
 			}
 		}
 		if(all_stores){
@@ -471,7 +542,7 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 			// build a BStore to encapsulate this element,
 			// but note that it's not an object or array, so we're just gonna
 			// have to make a BStore entry of the correct primitive type
-			thestores.resize(thestores.size()+1,BStore(false, result.typechecking));
+			thestores.resize(thestores.size()+1,BStore(false, false));
 			bool ok = ScanJsonObjectPrimitive(tmp, thestores.back());
 			if(verbose) std::cout<<"returned "<<ok<<std::endl;
 			if(!ok) return false;
@@ -485,7 +556,8 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 	
 	// determine the type of our return
 	int typesset=0;
-	if(theints.size())   { result.type = JsonParserResultType::ints;    ++typesset; }
+	if(thesints.size())  { result.type = JsonParserResultType::sints;   ++typesset; }
+	if(theuints.size())  { result.type = JsonParserResultType::uints;   ++typesset; }
 	if(thefloats.size()) { result.type = JsonParserResultType::floats;  ++typesset; }
 	if(thestrings.size()){ result.type = JsonParserResultType::strings; ++typesset; }
 	if(thebools.size())  { result.type = JsonParserResultType::bools;   ++typesset; }
@@ -510,11 +582,24 @@ bool JSONP::ScanJsonObjectPrimitive(std::string thejson, BStore& outstore){
 	
 	try {
 		if(verbose) std::cout<<"try int"<<std::endl;
+
+		// discard leading whitespace
+		size_t startpos=0;
 		size_t endpos=0;
-		int64_t nextint = std::stol(thejson,&endpos);
-		if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
-		outstore.Set("0",nextint);
-		return true;
+		while(startpos<thejson.length() && std::isspace(thejson[startpos])) ++startpos;
+		if(thejson.front()=='-'){
+			// if negative use temporary int64_t
+			int64_t nextint = std::stoll(thejson,&endpos);
+			if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
+			outstore.Set("0",nextint);
+			return true;
+		} else {
+			// else use temporary uint64_t
+			uint64_t nextint = std::stoull(thejson,&endpos);
+			if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
+			outstore.Set("0",nextint);
+			return true;
+		}
 	}
 	catch(std::invalid_argument& e){
 		// not an int
@@ -673,7 +758,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			bool trytoparse=true;
 			if(trytoparse && tmp.front()=='{'){
 				// add the new element
-				BStore res(false, outstore.TypeChecking());
+				BStore res(false, false);
 				bool ok =  ScanJsonObject(tmp.substr(1,tmp.length()-2), res);
 				if(!ok) return false;
 				outstore.Set(next_key,res);
@@ -683,14 +768,19 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			if(trytoparse && tmp.front()=='['){
 				if(verbose) std::cout<<"it array"<<std::endl;
 				// add the new element
-				JsonParserResult res(outstore.TypeChecking());
+				JsonParserResult res;
 				bool ok =  ScanJsonArray(tmp.substr(1,tmp.length()-2), res);
 				if(verbose) std::cout<<"parse array ret:"<<ok<<std::endl;
 				if(!ok || res.type==JsonParserResultType::undefined) return false;
 				switch (res.type){
-					case JsonParserResultType::ints: {
-						if(verbose) std::cout<<"array was of ints"<<std::endl;
-						outstore.Set(next_key,res.theints);
+					case JsonParserResultType::sints: {
+						if(verbose) std::cout<<"array was of signed ints"<<std::endl;
+						outstore.Set(next_key,res.thesints);
+						break;
+					}
+					case JsonParserResultType::uints: {
+						if(verbose) std::cout<<"array was of unsigned ints"<<std::endl;
+						outstore.Set(next_key,res.theuints);
 						break;
 					}
 					case JsonParserResultType::floats: {
@@ -734,11 +824,22 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			if(verbose && trytoparse) std::cout<<"not array"<<std::endl;
 			
 			if(trytoparse){
+				// discard leading whitespace
+				size_t startpos=0;
+				size_t endpos=0;
+				while(startpos<tmp.length() && std::isspace(tmp[startpos])) ++startpos;
 				try {
-					size_t endpos=0;
-					int64_t nextint = std::stol(tmp,&endpos);
-					if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
-					outstore.Set(next_key,nextint);
+					if(tmp.front()=='-'){
+						// if negative use temporary int64_t
+						int64_t nextint = std::stoll(tmp,&endpos);
+						if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+						outstore.Set(next_key,nextint);
+					} else {
+						// else use temporary uint64_t
+						uint64_t nextint = std::stoull(tmp,&endpos);
+						if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+						outstore.Set(next_key,nextint);
+					}
 					trytoparse=false;
 				}
 				catch(std::invalid_argument& e){
@@ -788,7 +889,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 			}
 			if(verbose && trytoparse) std::cout<<"not string"<<std::endl;
 			if(trytoparse){
-				BStore astore(false, outstore.TypeChecking());
+				BStore astore(false, false);
 				bool ok = ScanJsonObjectPrimitive(tmp, astore);
 				if(!ok) return false;
 				outstore.Set(next_key,astore);

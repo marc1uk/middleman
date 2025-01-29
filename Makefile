@@ -25,6 +25,9 @@ all: middleman
 middleman: main.cpp $(filter-out main.o, $(patsubst %.cpp, %.o, $(wildcard *.cpp)))
 	g++ $(CXXFLAGS) $^ -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) -lpthread
 
+testparse: testparse.cxx $(filter-out main.o, $(patsubst %.cpp, %.o, $(wildcard *.cpp)))
+	g++ $(CXXFLAGS) $^ -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) -lpthread
+
 %.o: %.cpp %.h
 	g++ $(CXXFLAGS) -c -fPIC $< -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) -lpthread
 
