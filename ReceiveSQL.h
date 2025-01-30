@@ -61,7 +61,7 @@ class ReceiveSQL{
 	bool RunNextReadQuery();
 	bool RunNextMulticastMsg();
 	bool SendNextReply();
-	bool SendNextLogMsg();
+	bool SendNextMulticast();
 	std::string escape_json(std::string s);
 	bool BroadcastPresence();
 	bool CleanupCache();
@@ -189,7 +189,7 @@ class ReceiveSQL{
 	std::map<std::pair<std::string, uint32_t>, Query> rd_txn_queue;
 	std::map<std::pair<std::string, uint32_t>, Query> resp_queue;
 	std::deque<std::string> in_multicast_queue;
-	std::deque<std::string> out_log_queue;
+	std::deque<std::string> out_multicast_queue;
 	// we'll cache a set of recent responses send to each client,
 	// then if a client that misses their acknowledgement and resends the query,
 	// we can resend the response without re-running the query.
@@ -217,13 +217,18 @@ class ReceiveSQL{
 	boost::posix_time::time_duration elapsed_time;
 	
 	// Monitoring stats.
+	// min, max time the Execute call took since last TrackStats call
+	double min_loop_ms=99999999;
+	double max_loop_ms=0;
+	// number of loops between TrackStats call
+	double loops=0;
 	// number of messages received over zmq sockets, and how many failed.
 	unsigned long write_queries_recvd = 0;
 	unsigned long write_query_recv_fails = 0;
 	unsigned long read_queries_recvd = 0;
 	unsigned long read_query_recv_fails = 0;
-	unsigned long multicast_msgs_recvd = 0;
-	unsigned long multicast_msg_recv_fails = 0;
+	unsigned long multicasts_recvd = 0;
+	unsigned long multicast_recv_fails = 0;
 	unsigned long mm_broadcasts_recvd = 0;
 	unsigned long mm_broadcast_recv_fails = 0;
 	
@@ -232,13 +237,13 @@ class ReceiveSQL{
 	unsigned long read_queries_failed = 0;
 	
 	// number of postgres multicast message insertions that failed
-	unsigned long in_multicast_failed = 0;
+	unsigned long multicast_queries_failed = 0;
 	
 	// number of messages sent over zmq sockets, and how many failed.
 	unsigned long reps_sent = 0;
 	unsigned long rep_send_fails = 0;
-	unsigned long log_msgs_sent = 0;
-	unsigned long log_send_fails = 0;
+	unsigned long multicasts_sent = 0;
+	unsigned long multicast_send_fails = 0;
 	unsigned long mm_broadcasts_sent = 0;
 	unsigned long mm_broadcasts_failed = 0;
 	
@@ -261,7 +266,7 @@ class ReceiveSQL{
 	// number of messages we've dropped from queues due to overflow
 	unsigned long dropped_writes = 0;
 	unsigned long dropped_reads = 0;
-	unsigned long dropped_acks = 0;
+	unsigned long dropped_resps = 0;
 	// number of log messages we've fropped from queues due to overflow
 	unsigned long dropped_multicast_in = 0;
 	unsigned long dropped_logs_out = 0;

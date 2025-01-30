@@ -2,6 +2,8 @@
 #define MM_UTILITIES_H
 
 #include <DAQUtilities.h>
+#include <errno.h>     // for errno
+#include <set>
 
 using namespace ToolFramework;
 

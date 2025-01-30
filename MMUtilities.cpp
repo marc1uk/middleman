@@ -6,6 +6,8 @@ MMUtilities::MMUtilities(zmq::context_t* zmqcontext) : DAQUtilities(zmqcontext){
 
 }
 
+const std::set<int> connect_errs{EINVAL,EPROTONOSUPPORT,ENOCOMPATPROTO,ETERM,ENOTSOCK,EMTHREAD};
+
 int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, int read_port_num, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, int write_port_num, zmq::socket_t* mm_sock, std::map<std::string, Store*> &mm_conns, int mm_port_num){
     // it's like UpdateConnections, but rather than connecting to specifically named endpoints,
     // we find all services that aren't middlemen and assume they have associated postgres client endpoints
@@ -73,7 +75,21 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
           readrep_conns[ip]=service;
           tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
+          // annoyingly libzmq doesn't expose the return value of zmq::socket_t::connect
+          // so we can't clearly check whether a socket connect succeeded or failed. >:(
+          // if it fails it should set errno to say why. Now it is poor practice to use
+          // errno unless you know it should be checked, because its value may be set by
+          // intervening calls that do not indicate an actual error. But its the best we have.
+          // at the least we should check the currently set value represents one that
+          // will be set by zmq::socket_t::connect in the event of an error
+          errno=0;
           readrep_sock->connect(tmp.c_str());
+          if(errno!=0 && connect_errs.count(errno)){
+            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to read socket "
+                     <<tmp<<": "<<zmq_strerror(errno)<<std::endl;
+          } else {
+            std::cout<<"MMUtilities::ConnectToEndpoints new connection to read socket "<<tmp<<std::endl;
+          }
           ++num_new_connections;
           
           // write socket is only connected to by the master middleman
@@ -86,7 +102,14 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
             write_conns[ip]=service;
             tmp=ip + ":" + store_port;
             tmp="tcp://"+ tmp;
+            errno=0;
             write_sock->connect(tmp.c_str());
+            if(errno!=0 && connect_errs.count(errno)){
+              std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to write socket "
+                       <<tmp<<": "<<zmq_strerror(errno)<<std::endl;
+            } else {
+              std::cout<<"MMUtilities::ConnectToEndpoints new connection to write socket "<<tmp<<std::endl;
+            }
             ++num_new_connections;
           }
           
@@ -119,3 +142,5 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
     
     return num_new_connections;
 }
+
+
