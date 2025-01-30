@@ -1,9 +1,13 @@
 #include "JsonParser.h"
 #include <iostream>
 #include <string>
+#include <limits>
 
 int main(){
 	JSONP parser;
+	bool ok;
+	bool typechecking=true;
+	BStore out(false,typechecking);  // BStore::BStore(header, typechecking)
 	
 	//parser.SetVerbose(1);
 	std::string testjson="{ \"device\":\"mydevice\", \"signed\":-12, \"unsigned\":3, \"zero\":0, \"trailingspace\":  999 , "
@@ -11,6 +15,12 @@ int main(){
                              "\"floats2\":[10,-12,13.33],\"cat?\":\"yes\", \"inhomo\":[ 5, true, \"cat\" ], "
 	                     "  \"nested\":[ { \"inner1\":\"1\", \"inner2\":\"2\" }, { \"inner3\":\"3\", \"inner4\":\"4\" } ], "
 	                     " \"nested2\":[ [ 1,2,3 ], [4,5,6] ] }";
+	//std::string testjson="{ \"uintmax\":" + std::to_string(std::numeric_limits<uint64_t>::max())
+                             +", \"intmax\":" + std::to_string(std::numeric_limits<int64_t>::max())
+	                    +", \"intmin\":" + std::to_string(std::numeric_limits<int64_t>::min())+" }";
+	
+	std::cout<<"testjson: "<<testjson<<std::endl;
+	parser.Parse(testjson, out);
 	
         // NOTE:
         // what specific type of integer is {"anum":5}? uint32_t? int64_t?
@@ -26,9 +36,40 @@ int main(){
         // the types of every element in order to get them all appropriately...and that's a pain for a test script that
 	// just wants to print them out.
         // so we use Evgenii's handy JsonEncode, but that requires typechecking on, so we turn it on just for testing.
-	bool typechecking=false;
-	BStore out(false,typechecking);
-	parser.Parse(testjson, out);
+	
+	/*
+	uint64_t a=0,b=0,c=0;
+	ok = out.Get("uintmax",a);
+	std::cout<<"OK:"<<ok<<std::endl;
+	ok = out.Get("intmax",b);
+	std::cout<<"OK:"<<ok<<std::endl;
+	ok = out.Get("intmin",c);
+	std::cout<<"OK:"<<ok<<std::endl;
+	std::cout<<"nums: "<<a<<", "<<*(reinterpret_cast<int64_t*>(&b))<<", "<<*(reinterpret_cast<int64_t*>(&c))<<std::endl;
+	return 0;
+	
+	//////////
+	
+	int64_t signednum;
+	uint64_t unsignednum;
+	
+	out.Get("uintmax",unsignednum);
+	std::cout<<"uint64_t max: "<<unsignednum<<", cast to int64_t: "<<*(reinterpret_cast<int64_t*>(&unsignednum))<<std::endl;
+	out.Get("intmax",signednum);
+	std::cout<<"int64_t max: "<<signednum<<", cast to uint64_t: "<<*(reinterpret_cast<uint64_t*>(&signednum))<<std::endl;
+	out.Get("intmin",signednum);
+	std::cout<<"int64_t min: "<<signednum<<", cast to uint64_t: "<<*(reinterpret_cast<uint64_t*>(&signednum))<<std::endl;
+	
+	out.Get("uintmax",signednum);
+	std::cout<<"uint64_t max into int64_t: "<<signednum<<", cast to uint64_t: "<<*(reinterpret_cast<uint64_t*>(&signednum))<<std::endl;
+	out.Get("intmax",unsignednum);
+	std::cout<<"int64_t max into uint64_t: "<<unsignednum<<", cast to int64_t: "<<*(reinterpret_cast<int64_t*>(&unsignednum))<<std::endl;
+	out.Get("intmin",unsignednum);
+	std::cout<<"int64_t min into uint64_t: "<<unsignednum<<", cast to int64_t: "<<*(reinterpret_cast<int64_t*>(&unsignednum))<<std::endl;
+	
+	
+	return 0;
+	*/
 	
 	// notes as of time of writing (29-jan-2025):
 	// BStore::Print(true) doesn't work as internals are binary and can't be printed
@@ -37,6 +78,7 @@ int main(){
 	std::string device;
 	//int64_t asigned;
 	//uint64_t aunsigned;
+	/*
 	int32_t asigned;
 	int32_t aunsigned;
 	int64_t azero;
@@ -44,13 +86,20 @@ int main(){
 	std::vector<int64_t> signs;
 	std::vector<int64_t> unsigns;
 	std::vector<int64_t> signs2;
+	*/
+	uint64_t asigned;
+	uint64_t aunsigned;
+	uint64_t azero;
+	uint64_t trailing;
+	std::vector<uint64_t> signs;
+	std::vector<uint64_t> unsigns;
+	std::vector<uint64_t> signs2;
 	std::vector<double> floats;
 	std::vector<double> floats2;
 	BStore arraystore(false,typechecking);
 	BStore nestedobjs(false,typechecking);
 	BStore nestedarrays(false,typechecking);
 	
-	bool ok;
 	ok = out.Get("device",device);
 	ok = out.Get("signed",asigned);
 	ok = out.Get("unsigned",aunsigned);
@@ -66,14 +115,14 @@ int main(){
 	ok = out.Get("nested2",nestedarrays);
 	
 	std::cout<<"device: "<<device
-		<<", signed: "<<asigned
+		<<", signed: "<<*reinterpret_cast<int64_t*>(&asigned)
 		<<", unsigned: "<<aunsigned
 		<<", zero: "<<azero
 		<<", trailingspace: "<<trailing
 		<<std::endl;
 	std::cout<<"signeds:"<<std::endl;
 	for(auto& asigned : signs){
-		std::cout<<asigned<<", ";
+		std::cout<<*reinterpret_cast<int64_t*>(&asigned)<<", ";
 	}
 	std::cout<<std::endl;
 	std::cout<<"unsigneds:"<<std::endl;
@@ -88,7 +137,7 @@ int main(){
 	std::cout<<std::endl;
 	std::cout<<"signeds2:"<<std::endl;
 	for(auto& asigned : signs2){
-		std::cout<<asigned<<", ";
+		std::cout<<*reinterpret_cast<int64_t*>(&asigned)<<", ";
 	}
 	std::cout<<std::endl;
 	std::cout<<"floats2:"<<std::endl;

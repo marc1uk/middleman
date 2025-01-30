@@ -1058,7 +1058,7 @@ bool ReceiveSQL::WriteAlarmToQuery(const std::string& message, BStore& alarm, st
 	//time_t timestamp{0};
 	uint64_t timestamp{0};
 	std::string device;
-	uint32_t level;
+	uint64_t level;
 	std::string msg;
 	alarm.Get("time",timestamp);  // may not be present, in which case use 0 -> i.e. now()
 	get_ok  = alarm.Get("device",device);
@@ -1156,8 +1156,8 @@ bool ReceiveSQL::WritePlotlyPlotToQuery(const std::string& message, BStore& plot
 	std::string name;
 	std::string traces;
 	std::string layout;
-	int version = -1;
 	uint64_t timestamp = 0;
+	uint64_t version = -1;
 	get_ok  = plot.Get("name", name);
 	get_ok &= plot.JsonEncode("traces", traces);
 	get_ok &= plot.JsonEncode("layout", layout);
@@ -1201,7 +1201,11 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 	Log(Concat("Forming SQL for write query with topic: '",topic,"', message: '",message,"'"),4);
 
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
-	BStore store(false, false); // must disable typechecking
+	BStore store(false, true); // WritePlotlyPlotToQuery requires BStore::JsonEncoder, which requires typechecking
+	// since the JsonParser/JSONP class needs to convert string numbers to c++ integral types, the best way seems to be:
+	// convert all integral numbers to uint64_t (typechecking then requires we also extract as uint64_t)
+	// if the value may have been negative, use `int64_t val = *reinterpret_cast<int64_t*>(&uint64_val);` to convert it.
+	// this process should support all positive and negative integral numbers. (floating point numbers are all doubles).
 	get_ok = parser.Parse(message, store);
 	if(!get_ok){
 		Log("WriteMessageToQuery error parsing message json '"+message+"'",v_error);
@@ -1340,13 +1344,14 @@ bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& req
 	
 	// get a new device config entry
 	std::string device;
-	int32_t version;
+	uint64_t version_u;
 	get_ok  = request.Get("device",device);
-	get_ok &= request.Get("version",version);
+	get_ok &= request.Get("version",version_u);
 	if(!get_ok){
-		return false;
 		Log("ReadDeviceConfigToQuery missing fields in message '"+message+"'",v_error);
+		return false;
 	}
+	int version = *reinterpret_cast<int64_t*>(&version_u);
 	
 	// SQL sanitization
 	get_ok  = a_database.pqxx_quote(device, device);
@@ -1383,9 +1388,10 @@ bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& reques
 	// it would seem sensible that users may query via a specific 'config_id'
 	// or via a pair of 'name' and 'version'
 	// first check for a specific config_id
-	int32_t config_id;
-	get_ok  = request.Get("config_id",config_id);
+	uint64_t config_id_u;
+	get_ok  = request.Get("config_id",config_id_u);
 	if(get_ok){
+		int config_id = *reinterpret_cast<int64_t*>(&config_id_u);
 		// if user requests id <0, give latest
 		std::string idstring;
 		if(config_id<0){
@@ -1400,12 +1406,12 @@ bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& reques
 		
 		// if not given, see if there is a name and version number
 		std::string config_name;
-		int32_t version_num;
+		uint64_t version_u;
 		get_ok = request.Get("name",config_name);
-		get_ok = get_ok && request.Get("version",version_num);
+		get_ok = get_ok && request.Get("version",version_u);
 		if(!get_ok){
-			return false;
 			Log("ReadRunConfigToQuery missing fields in message '"+message+"'",v_error);
+			return false;
 		}
 		
 		// SQL sanitization
@@ -1416,6 +1422,7 @@ bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& reques
 		}
 		
 		// if user requests version <0, give latest
+		int version_num = *reinterpret_cast<int64_t*>(&version_u);
 		std::string versionstring;
 		if(version_num<0){
 			versionstring = "(SELECT MAX(version) FROM configurations WHERE name="+config_name+")";
@@ -1441,9 +1448,9 @@ bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& requ
 	
 	// get a calibration data entry
 	std::string device;
-	int32_t version;
+	uint64_t version_u;
 	get_ok  = request.Get("device",device);
-	get_ok &= request.Get("version",version);
+	get_ok &= request.Get("version",version_u);
 	if(!get_ok){
 		Log("ReadCalibrationToQuery missing fields in message '"+message+"'",v_error);
 		return false;
@@ -1457,6 +1464,7 @@ bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& requ
 	}
 	
 	// if user requests version <0, give latest
+	int version = *reinterpret_cast<int64_t*>(&version_u);
 	std::string versionstring;
 	if(version<0){
 		versionstring = "(SELECT MAX(version) FROM device_config WHERE device="+device+")";
@@ -1482,9 +1490,9 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 	
 	// get a ROOT plot entry
 	std::string plot_name;
-	int version=-1;
+	uint64_t version_u = -1;
 	get_ok  = request.Get("plot_name",plot_name);
-	get_ok &= request.Get("version",version);
+	request.Get("version",version_u);
 	if(!get_ok){
 		Log("ReadRootPlotToQuery missing fields in message '"+message+"'",v_error);
 		return false;
@@ -1499,6 +1507,7 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 	
 	// FIXME this needs to know which rootplots table to read from
 	sql_out = "SELECT draw_options, time, version, data FROM rootplots WHERE name=" + plot_name;
+	int version = *reinterpret_cast<int64_t*>(&version_u);
 	if(version<0){
 		sql_out += " ORDER BY time DESC LIMIT 1;";
 	} else {
@@ -1518,9 +1527,9 @@ bool ReceiveSQL::ReadPlotlyPlotToQuery(const std::string& message, BStore& reque
 	Postgres& a_database = m_databases.at(db_out);
 
 	std::string name;
-	int version = -1;
+	uint64_t version_u = -1;
 	get_ok = request.Get("name", name);
-	request.Get("version", version);
+	request.Get("version", version_u);
 	if (!get_ok) {
 		Log("ReadPlotlyPlotToQuery: missing fields in message '" + message + "'", v_error);
 		return false;
@@ -1534,6 +1543,7 @@ bool ReceiveSQL::ReadPlotlyPlotToQuery(const std::string& message, BStore& reque
 	}
 
 	sql_out = "SELECT version, traces, layout, time FROM plotlyplots WHERE name = " + name;
+	int version = *reinterpret_cast<int64_t*>(&version_u);
 	if (version < 0) {
 		sql_out += " ORDER BY time DESC LIMIT 1;";
 	} else {
@@ -1664,7 +1674,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		std::string device;
 		//time_t timestamp{0};
 		uint64_t timestamp{0};
-		uint32_t severity;
+		uint64_t severity;
 		std::string msg;
 		get_ok = tmp.Get("time",timestamp); // optional
 		get_ok = tmp.Get("device",device);

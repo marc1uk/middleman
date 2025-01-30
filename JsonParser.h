@@ -30,6 +30,7 @@ class JSONP {
 	bool Parse(std::string thejson, BStore& output);
 	std::string Trim(const std::string& thejson);
 	bool iEquals(const std::string& str1, const std::string& str2);
+	bool IsInteger(std::string& tmp);
 	void SetVerbose(bool);
 	
 	private:

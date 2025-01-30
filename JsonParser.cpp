@@ -41,6 +41,11 @@ bool JSONP::iEquals(const std::string& str1, const std::string& str2){
 	return true;
 }
 
+bool JSONP::IsInteger(std::string& tmp){
+	for(char& next : tmp) if(!std::isdigit(next) && !std::isspace(next) && next!='-') return false;
+	return true;
+}
+
 
 bool JSONP::Parse(std::string thejson, BStore& output){
 
@@ -384,12 +389,15 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 				size_t startpos=0;
 				size_t endpos=0;
 				while(startpos<tmp.length() && std::isspace(tmp[startpos])) ++startpos;
-				if(tmp.front()=='-'){
+				if(false && tmp.front()=='-'){  // always use uint64_t
 					throw std::invalid_argument("not unsigned");
 				} else {
 					// else try to scan into uint64_t
-					uint64_t nextint = std::stoull(tmp,&endpos);
-					if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+					//uint64_t nextint = std::stoull(tmp,&endpos);
+					//if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+					
+					if(!IsInteger(tmp)){ throw std::invalid_argument("not integer"); }
+					uint64_t nextint = strtoull(tmp.c_str(),nullptr,10); // use old version to ignore out of range errors
 					if(verbose) std::cout<<"match uint"<<std::endl;
 					theuints.push_back(nextint);
 					continue;
@@ -603,7 +611,7 @@ bool JSONP::ScanJsonPrimitive(std::string thejson, std::string thekey, BStore& o
 		size_t startpos=0;
 		size_t endpos=0;
 		while(startpos<thejson.length() && std::isspace(thejson[startpos])) ++startpos;
-		if(thejson.front()=='-'){
+		if(false && thejson.front()=='-'){ // always use uint64_t
 			// if negative use temporary int64_t
 			int64_t nextint = std::stoll(thejson,&endpos);
 			if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
@@ -611,8 +619,11 @@ bool JSONP::ScanJsonPrimitive(std::string thejson, std::string thekey, BStore& o
 			return true;
 		} else {
 			// else use temporary uint64_t
-			uint64_t nextint = std::stoull(thejson,&endpos);
-			if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
+			//uint64_t nextint = std::stoull(thejson,&endpos);
+			//if(endpos!=thejson.length()) throw std::invalid_argument("extra chars");
+			
+			if(!IsInteger(thejson)){ throw std::invalid_argument("not integer"); }
+			uint64_t nextint = strtoull(thejson.c_str(),nullptr,10); // use old version to ignore out of range errors
 			outstore.Set(thekey,nextint);
 			return true;
 		}
@@ -847,15 +858,18 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 				size_t endpos=0;
 				while(startpos<tmp.length() && std::isspace(tmp[startpos])) ++startpos;
 				try {
-					if(tmp.front()=='-'){
+					if(false && tmp.front()=='-'){ // always use uint64_t
 						// if negative try temporary int64_t
 						int64_t nextint = std::stoll(tmp,&endpos);
 						if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
 						outstore.Set(next_key,nextint);
 					} else {
 						// else try temporary uint64_t
-						uint64_t nextint = std::stoull(tmp,&endpos);
-						if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+						//uint64_t nextint = std::stoull(tmp,&endpos);
+						//if(endpos!=tmp.length()) throw std::invalid_argument("extra chars");
+						
+						if(!IsInteger(tmp)){ throw std::invalid_argument("not integer"); }
+						uint64_t nextint = strtoull(tmp.c_str(),nullptr,10); // use old version to ignore out of range errors
 						outstore.Set(next_key,nextint);
 					}
 					trytoparse=false;
