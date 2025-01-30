@@ -19,6 +19,7 @@
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
 bool ReceiveSQL::Initialise(const std::string& configfile){
+	//parser.SetVerbose(true);
 	Store m_variables;
 	Log("Reading config",3);
 	m_variables.Initialise(configfile);
@@ -1156,7 +1157,7 @@ bool ReceiveSQL::WritePlotlyPlotToQuery(const std::string& message, BStore& plot
 	std::string traces;
 	std::string layout;
 	int version = -1;
-	int64_t timestamp = 0;
+	uint64_t timestamp = 0;
 	get_ok  = plot.Get("name", name);
 	get_ok &= plot.JsonEncode("traces", traces);
 	get_ok &= plot.JsonEncode("layout", layout);
@@ -1200,7 +1201,7 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 	Log(Concat("Forming SQL for write query with topic: '",topic,"', message: '",message,"'"),4);
 
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
-	BStore store(false, true);
+	BStore store(false, false); // must disable typechecking
 	get_ok = parser.Parse(message, store);
 	if(!get_ok){
 		Log("WriteMessageToQuery error parsing message json '"+message+"'",v_error);
