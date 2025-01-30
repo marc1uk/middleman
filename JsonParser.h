@@ -8,18 +8,18 @@
 
 using namespace ToolFramework; // for BStore
 
-enum class JsonParserResultType { ints, floats, strings, bools, nulls, stores, empty, undefined };
+enum class JsonParserResultType { sints, uints, floats, strings, bools, nulls, stores, empty, undefined };
 struct JsonParserResult {
-	std::vector<int64_t> theints{};
+	std::vector<int64_t> thesints{};
+	std::vector<uint64_t> theuints{};
 	std::vector<double> thefloats{};
 	std::vector<std::string> thestrings{};
 	std::vector<int> thebools{};
 	std::vector<std::string> thenulls{};
-	std::vector<BStore> thestores{};
+	BStore thestore;
 	JsonParserResultType type=JsonParserResultType::undefined;
-	bool typechecking;
 	
-	JsonParserResult(bool typechecking): typechecking(typechecking) {};
+	JsonParserResult(bool typechecking) { thestore=BStore(false,typechecking); };
 };
 
 class JSONP {
@@ -30,13 +30,16 @@ class JSONP {
 	bool Parse(std::string thejson, BStore& output);
 	std::string Trim(const std::string& thejson);
 	bool iEquals(const std::string& str1, const std::string& str2);
+	bool IsInteger(std::string& tmp);
 	void SetVerbose(bool);
 	
 	private:
 	bool ScanJsonArray(const std::string& thejson, JsonParserResult& result);
-	bool ScanJsonObjectPrimitive(std::string thejson, BStore& outstore);
+	bool ScanJsonPrimitive(std::string thejson, std::string thekey, BStore& outstore);
 	bool ScanJsonObject(std::string thejson, BStore& outstore);
+	
 	int verbose=0;
+	bool typechecking=false;
 	
 };
 #endif
