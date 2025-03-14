@@ -118,6 +118,7 @@ void Postgres::Init(std::string hostname_in, std::string hostip_in, int port_in,
 
 // XXX reminder that pqxx::result is a reference-counting wrapper and is not thread-safe! XXX
 bool Postgres::Query(std::string query, int nret, pqxx::result* res, pqxx::row* row, std::string* err){
+	
 	// maybe this is redundant since OpenConnection will check is_open (against recommendations)
 	for(int tries=0; tries<2; ++tries){
 		// ensure we have a connection to work with

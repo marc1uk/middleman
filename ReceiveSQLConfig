@@ -41,13 +41,13 @@ dont_promote 0
 max_send_attempts 3
 # how many postgres queries in the queue before we warn about being full
 warn_limit 700
-# how many postgres queries before we start dropping them 
+# how many postgres queries before we start dropping them
 drop_limit 1000
 # how long to cache received messages so we don't get duplicates
 cache_period_ms 10000
 # if writes are sent to the read-only port, but we're master, should we accept them?
 handle_unexpected_writes 0
 stats_period_ms 60000
-stdio_verbosity 6
+stdio_verbosity 3
 db_verbosity 1
 service_discovery_config ServiceDiscoveryConfig

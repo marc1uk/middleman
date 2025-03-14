@@ -56,11 +56,16 @@ bool ReceiveSQL::Initialise(const std::string& configfile){
 
 bool ReceiveSQL::Execute(){
 	Log("ReceiveSQL Executing...",21);
+	
 	auto loop_start = std::chrono::high_resolution_clock::now();
+	auto last = std::chrono::high_resolution_clock::now();
 	
 	// find new clients
 	Log("Finding new clients",20);
 	get_ok = FindNewClients_v2();
+	timers["Finding Clients"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// poll the input sockets for messages
 	Log("Polling input sockets",20);
@@ -73,6 +78,10 @@ bool ReceiveSQL::Execute(){
 	if(get_ok<0){
 		Log("Warning! ReceiveSQL error polling input sockets; have they closed?",0);
 	}
+	
+	timers["Poll input sockets"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// debug print
 	std::string pollsmsg;
@@ -106,26 +115,57 @@ bool ReceiveSQL::Execute(){
 		Log("Getting Client Write Queries",20);
 		get_ok = GetClientWriteQueries();
 	}
+	timers["Get Write Queries"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	Log("Getting Client Read Queries",20);
 	get_ok = GetClientReadQueries();
+	timers["Get Read Queries"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	if(am_master){
 		Log("Getting Client Multicast Messages",20);
 		get_ok = GetMulticastMessages();
 	}
+	timers["Get Multicasts"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	Log("Getting Middleman Checkin",20);
 	get_ok = GetMiddlemanCheckin();
+	timers["Get MM check-in"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	Log("Checking Master Status",20);
 	get_ok = CheckMasterStatus();
+	timers["Get MM status"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	if(am_master){
 		Log("Running Next Write Query",20);
 		get_ok = RunNextWriteQuery();
 	}
+	timers["Run Write Query"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	Log("Running Next Read Query",20);
 	get_ok = RunNextReadQuery();
+	timers["Run Read Query"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	if(am_master){
 		Log("Running Next Fire-and-Forget Message",20);
 		get_ok = RunNextMulticastMsg();
 	}
+	timers["Run Multicast"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// poll the output sockets for listeners
 	Log("Polling output sockets",20);
@@ -138,14 +178,28 @@ bool ReceiveSQL::Execute(){
 	if(get_ok<0){
 		Log("Warning! ReceiveSQL error polling output sockets; have they closed?",0);
 	}
+	timers["Poll output sockets"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// send outputs
 	Log("Sending Next Client Response",20);
 	get_ok = SendNextReply();
+	timers["Send Reply"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	Log("Sending Next Log Message",20);
 	get_ok = SendNextMulticast();
+	timers["Send Multicast"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
+	
 	Log("Broadcasting Presence",20);
 	get_ok = BroadcastPresence();
+	timers["SD Broadcast"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// Maintenance
 	Log("Trimming Write Queue",20);
@@ -162,14 +216,23 @@ bool ReceiveSQL::Execute(){
 	get_ok = TrimCache();
 	Log("Cleaning Up Old Cache Messages",20);
 	get_ok = CleanupCache();
+	timers["Cleanup"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// Monitoring and Logging
 	Log("Tracking Stats",20);
 	if(!stats_period.is_negative()) get_ok = TrackStats();
+	timers["Stats"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	// Check for any commands from remote control port
 	Log("Checking Controls",20);
 	get_ok = UpdateControls();
+	timers["Update Controls"] =
+	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
+	last = std::chrono::high_resolution_clock::now();
 	
 	Log("Loop Iteration Done",20);
 	auto loop_end = std::chrono::high_resolution_clock::now();
@@ -178,6 +241,11 @@ bool ReceiveSQL::Execute(){
 	int loop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start).count();
 	if(loop_ms>3000){
 		Log("Warning: Middleman Execute took "+std::to_string(loop_ms)+"ms!",v_warning);
+		std::string msg="Timers were: ";
+		for(auto&& atimer : timers){
+			msg+= atimer.first + ": "+std::to_string(atimer.second)+" ms\n";
+		}
+		Log(msg,v_warning);
 	}
 	if(loop_ms<min_loop_ms) min_loop_ms=loop_ms;
 	if(loop_ms>max_loop_ms) max_loop_ms=loop_ms;
@@ -822,9 +890,9 @@ bool ReceiveSQL::FindNewClients_v2(){
 		
 		std::string clientlist;
 		for(std::pair<const std::string,std::string>& aclient : clientsmap){
-			clientlist += aclient.first+": "+aclient.second+",";
+			if(!clientlist.empty()) clientlist+=", ";
+			clientlist += aclient.first+": "+aclient.second;
 		}
-		clientlist.pop_back(); // remove trailing ','
 		SC_vars["Clients"]->SetValue(clientlist);
 		
 	} else {
@@ -1219,7 +1287,7 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 		+ draw_options  + ","
 		+ json_data       + ") returning version;";
 	
-	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),50);
 	
 	return true;
 	
@@ -1267,11 +1335,11 @@ bool ReceiveSQL::WritePlotToQuery(const std::string& message, BStore& plot, std:
 		" SET (x, y, title, xlabel, ylabel, info) = row("
 		"   EXCLUDED.x, EXCLUDED.y, EXCLUDED.title, EXCLUDED.xlabel, EXCLUDED.ylabel, EXCLUDED.info"
 		" );";
-
-	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
-
+	
+	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 40);
+	
 	return true;
-
+	
 fail_get:
 	get_ok = 0;
 	Log("WritePlotToQuery: missing fields in message '" + message + "'", v_error);
@@ -1454,7 +1522,7 @@ bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& req
 		+ device + " AND version="
 		+ versionstring+";";
 	
-	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),12);
 	
 	return true;
 }
@@ -1515,7 +1583,7 @@ bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& reques
 		
 	}
 	
-	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),12);
 	
 	return true;
 }
@@ -1555,7 +1623,7 @@ bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& requ
 		+ device + " AND version="
 		+ versionstring+";";
 	
-	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),12);
 	
 	return true;
 	
@@ -1592,7 +1660,7 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 		sql_out += " AND version=" + std::to_string(version);
 	}
 	
-	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),4);
+	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),40);
 	
 	return true;
 	
@@ -1621,7 +1689,7 @@ bool ReceiveSQL::ReadPlotToQuery(const std::string& message, BStore& request, st
 
 	sql_out = "SELECT x, y, title, xlabel, ylabel, info FROM plots WHERE plot = " + name + ";";
 
-	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 4);
+	Log(Concat("Resulting SQL: '", sql_out, "', database: '", db_out, "'"), 40);
 
 	return true;
 }
@@ -1780,7 +1848,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		        + std::to_string(severity) + ","
 		        + msg                      + ");";
 		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),12);
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),100);
 		
 		return true;
 		
@@ -1822,7 +1890,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		        + device     + ","
 		        + data       + ");";
 		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),12);
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),50);
 		
 		return true;
 		
@@ -1870,7 +1938,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		        + draw_options  + ","
 		        + data       + ");";
 		
-		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),12);
+		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),50);
 		
 		return true;
 		
@@ -2094,7 +2162,8 @@ bool ReceiveSQL::RunNextWriteQuery(){
 bool ReceiveSQL::RunNextReadQuery(){
 	
 	// run our next postgres query, if we have one
-	if(rd_txn_queue.size()){
+	//if(rd_txn_queue.size()){
+	while(rd_txn_queue.size()){
 		
 		Query& next_msg = rd_txn_queue.begin()->second;
 		std::string& db = next_msg.database;
@@ -2130,7 +2199,13 @@ bool ReceiveSQL::RunNextMulticastMsg(){
 		    +" messages to process",13);
 		
 		std::string next_msg = in_multicast_queue.front();
+		auto t_start = std::chrono::high_resolution_clock::now();
 		get_ok = m_databases.at("daq").Query(next_msg);  // FIXME hard-coded db name
+		auto t_end = std::chrono::high_resolution_clock::now();
+		if(std::chrono::duration_cast<std::chrono::milliseconds>(t_end-t_start).count()>1000){
+			Log("Slow multicast query: '"+next_msg+"' took "+
+			std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t_end-t_start).count())+" ms",v_warning);
+		}
 		
 		if(not get_ok){
 			// something went wrong

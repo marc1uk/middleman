@@ -26,6 +26,8 @@
 #include <string>
 #include <iostream>
 #include <deque>
+//#include <unordered_map>
+#include <map>
 // multicast
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -284,6 +286,9 @@ class ReceiveSQL{
 	
 	// for holding stats variables and turning them into a json
 	Store MonitoringStore;
+	
+	// tracking where we spend our time
+	std::map<std::string, int> timers; // function -> time in ms
 	
 	////////////
 	// variadic templates: our excuse to use c++11 ;)

@@ -14,9 +14,6 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
     // for middlemen, we likewise find their Control service and assume they have a inter-middlemen comms point
     // since we connect to hidden endpoints, we need to already know their port numbers
     
-    boost::uuids::uuid m_UUID=boost::uuids::random_generator()();
-    long msg_id=0;
-
     zmq::socket_t Ireceive (*m_context, ZMQ_DEALER);
     Ireceive.connect("inproc://ServiceDiscovery");
 
@@ -39,6 +36,8 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
     iss>>size;
     
     int num_new_connections=0;
+    
+    std::set<std::string> active_endpoints;
 
     for(int i=0;i<size;i++){
       
@@ -60,6 +59,8 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
       service->Get("remote_port",store_port);
       std::string tmp;
       bool registered=false;
+      
+      active_endpoints.emplace(ip);
       
       if(type.substr(0,9)!="middleman"){
         // if this isn't a middleman, assume it's a service with a PGClient
@@ -83,14 +84,13 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
           // at the least we should check the currently set value represents one that
           // will be set by zmq::socket_t::connect in the event of an error
           errno=0;
-          readrep_sock->connect(tmp.c_str());
-          if(errno!=0 && connect_errs.count(errno)){
-            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to read socket "
-                     <<tmp<<": "<<zmq_strerror(errno)<<std::endl;
-          } else {
+          try {
+            readrep_sock->connect(tmp.c_str());
             std::cout<<"MMUtilities::ConnectToEndpoints new connection to read socket "<<tmp<<std::endl;
+            ++num_new_connections;
+          } catch(zmq::error_t& err){
+            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to read socket "<<tmp<<": "<<err.what()<<std::endl;
           }
-          ++num_new_connections;
           
           // write socket is only connected to by the master middleman
           if(write_sock){
@@ -103,14 +103,13 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
             tmp=ip + ":" + store_port;
             tmp="tcp://"+ tmp;
             errno=0;
-            write_sock->connect(tmp.c_str());
-            if(errno!=0 && connect_errs.count(errno)){
-              std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to write socket "
-                       <<tmp<<": "<<zmq_strerror(errno)<<std::endl;
-            } else {
+            try {
+              write_sock->connect(tmp.c_str()); // no return value but will throw instead!
               std::cout<<"MMUtilities::ConnectToEndpoints new connection to write socket "<<tmp<<std::endl;
+              ++num_new_connections;
+            } catch(zmq::error_t& err){
+              std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to write socket "<<tmp<<": "<<err.what()<<std::endl;
             }
-            ++num_new_connections;
           }
           
         } // else we're already connected to this service
@@ -127,17 +126,48 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
           mm_conns[ip]=service;
           tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
-          mm_sock->connect(tmp.c_str());
-          ++num_new_connections;
+          try {
+            mm_sock->connect(tmp.c_str());
+            std::cout<<"MMUtilities::ConnectToEndpoints new connection to middleman "<<tmp<<std::endl;
+            ++num_new_connections;
+          } catch(zmq::error_t& err){
+            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to middleman "<<tmp<<": "<<err.what()<<std::endl;
+          }
         }
         
       }
       
+      // delete the Store if we're not keeping it
       if(!registered){
         delete service;
         service=0;
       }
       
+    } // end loop over services in broadcast
+    
+    // prune inactive endpoints
+    std::vector<std::map<std::string,Store*>::iterator> to_erase;
+    for(std::map<std::string,Store*>::iterator it=readrep_conns.begin(); it!=readrep_conns.end(); ++it){
+      if(active_endpoints.count(it->first)==0){
+        std::cout<<"Booting inactive endpoint "<<it->first<<std::endl;
+        /*
+        // could explicitly disconnect?
+        std::string store_port="";
+        it->second->Get("remote_port",store_port);
+        std::string tmp="tcp://"+ it->first + ":" + store_port;
+        try {
+          readrep_sock->disconnect(tmp.c_str());
+          write_sock->disconnect(tmp.c_str());
+        } catch(zmq::error_t& err){
+          std::cerr<<"MMUtilities::ConnectToEndpoints error disconnecting from stale socket "<<tmp<<": "<<err.what()<<std::endl;
+        }
+        */
+        delete it->second;
+        to_erase.push_back(it);
+      }
+    }
+    for(std::map<std::string,Store*>::iterator it : to_erase){
+      readrep_conns.erase(it);
     }
     
     return num_new_connections;
