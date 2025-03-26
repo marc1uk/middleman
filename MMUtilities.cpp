@@ -76,14 +76,6 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
           readrep_conns[ip]=service;
           tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
-          // annoyingly libzmq doesn't expose the return value of zmq::socket_t::connect
-          // so we can't clearly check whether a socket connect succeeded or failed. >:(
-          // if it fails it should set errno to say why. Now it is poor practice to use
-          // errno unless you know it should be checked, because its value may be set by
-          // intervening calls that do not indicate an actual error. But its the best we have.
-          // at the least we should check the currently set value represents one that
-          // will be set by zmq::socket_t::connect in the event of an error
-          errno=0;
           try {
             readrep_sock->connect(tmp.c_str());
             std::cout<<"MMUtilities::ConnectToEndpoints new connection to read socket "<<tmp<<std::endl;
