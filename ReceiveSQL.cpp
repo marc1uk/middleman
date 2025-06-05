@@ -61,11 +61,13 @@ bool ReceiveSQL::Execute(){
 	auto last = std::chrono::high_resolution_clock::now();
 	
 	// find new clients
+	/* now handled by background thread
 	Log("Finding new clients",20);
 	get_ok = FindNewClients_v2();
 	timers["Finding Clients"] =
 	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
 	last = std::chrono::high_resolution_clock::now();
+	*/
 	
 	// poll the input sockets for messages
 	Log("Polling input sockets",20);
@@ -89,11 +91,11 @@ bool ReceiveSQL::Execute(){
 		if(in_polls.at(i).revents & ZMQ_POLLIN){
 			switch(i){
 				case 0: {
-					//pollsmsg+="M";  too many...
+					pollsmsg+="R";
 					break;
 				}
 				case 1: {
-					pollsmsg+="R";
+					//pollsmsg+="MM"; // middleman check-ins, don't care
 					break;
 				}
 				case 2: {
@@ -125,6 +127,8 @@ bool ReceiveSQL::Execute(){
 	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
 	last = std::chrono::high_resolution_clock::now();
 	
+	/*
+	// moved to thread
 	if(am_master){
 		Log("Getting Client Multicast Messages",20);
 		get_ok = GetMulticastMessages();
@@ -132,6 +136,7 @@ bool ReceiveSQL::Execute(){
 	timers["Get Multicasts"] =
 	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
 	last = std::chrono::high_resolution_clock::now();
+	*/
 	
 	Log("Getting Middleman Checkin",20);
 	get_ok = GetMiddlemanCheckin();
@@ -159,6 +164,8 @@ bool ReceiveSQL::Execute(){
 	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
 	last = std::chrono::high_resolution_clock::now();
 	
+	/*
+	// now handled by ReceiveSQL::MulticastWorker, which gets invoked by Utilities and does not need to be called explicitly
 	if(am_master){
 		Log("Running Next Fire-and-Forget Message",20);
 		get_ok = RunNextMulticastMsg();
@@ -166,6 +173,7 @@ bool ReceiveSQL::Execute(){
 	timers["Run Multicast"] =
 	               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - last).count();
 	last = std::chrono::high_resolution_clock::now();
+	*/
 	
 	// poll the output sockets for listeners
 	Log("Polling output sockets",20);
@@ -208,8 +216,6 @@ bool ReceiveSQL::Execute(){
 	get_ok = TrimQueue("rd_txn_queue");
 	Log("Trimming Ack Queue",20);
 	get_ok = TrimQueue("response_queue");
-	Log("Trimming In Multicast Deque",20);
-	get_ok = TrimDequeue("in_multicast_queue");
 	Log("Trimming Out Logging Deque",20);
 	get_ok = TrimDequeue("out_multicast_queue");
 	Log("Trimming Cache",20);
@@ -239,7 +245,7 @@ bool ReceiveSQL::Execute(){
 	
 	// tracking loop rate
 	int loop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start).count();
-	if(loop_ms>3000){
+	if(loop_ms>100){
 		Log("Warning: Middleman Execute took "+std::to_string(loop_ms)+"ms!",v_warning);
 		std::string msg="Timers were: ";
 		for(auto&& atimer : timers){
@@ -262,19 +268,40 @@ bool ReceiveSQL::Finalise(){
 	Log("Removing Discoverable Services",3);
 	if(utilities) utilities->RemoveService("middleman");
 	
-	Log("Closing multicast socket",3);
-	close(multicast_socket);
+	// signal background thread connecting to new clients to stop
+	m_util.KillThread(findclients_args);
+	
+	// signal background receiver thread to stop
+	multicast_listener_args->running=false;
+	m_util.KillThread(multicast_listener_args);
+	
+	// signal background workers to stop
+	for(MulticastWorker_args* thread_args : multicast_worker_args){
+		thread_args->running=false;
+	}
+	// wait for it to finish processing any multicast queries in its buffer
+	// it'll close the socket and tell us when it's done
+	int secs_to_wait=60;
+	for(int i=0; i<secs_to_wait; ++i){
+		bool all_done=true;
+		for(MulticastWorker_args* thread_args : multicast_worker_args){
+			if(!thread_args->finished) all_done=false;
+		}
+		if(all_done) break;
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+	for(MulticastWorker_args* thread_args : multicast_worker_args){
+		m_util.KillThread(thread_args);
+		delete thread_args;
+		thread_args=0;
+	}
+	multicast_worker_args.clear();
 	
 	Log("Deleting Utilities",3);
 	if(utilities){ delete utilities; utilities=nullptr; }
 	
 	Log("Deleting ServiceDiscovery",3);
 	if(service_discovery){ delete service_discovery; service_discovery=nullptr; }
-	
-	Log("Clearing known connections",3);
-	clt_rtr_connections.clear();
-	mm_rcv_connections.clear();
-	clt_sub_connections.clear();
 	
 	// delete sockets
 	Log("Deleting sockets",3);
@@ -344,11 +371,13 @@ bool ReceiveSQL::InitPostgres(Store& m_variables, const std::string& dbname){
 	                dbpasswd,
 	                dbname);
 	
-	// try to open a connection to ensure we can do, or else bail out now.
-	if(!m_database.OpenConnection()){
+	// try to open a connection to ensure we can do, or else bail out now
+	pqxx::connection* conn = m_database.OpenConnection();
+	if(conn==nullptr){
 		Log(Concat("Error! Failed to open connection to the ",dbname," database!"),0);
 		return false;
 	}
+	m_database.SetConnection(conn); // yeah this seems circular, urgh.
 	
 	return true;
 }
@@ -366,6 +395,8 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	// FIXME add to config file
 	m_variables.Get("multicast_port",multicast_port);
 	m_variables.Get("multicast_address",multicast_address);
+	int num_multicast_threads=10;
+	m_variables.Get("num_multicast_threads",num_multicast_threads);
 	
 	// set up multicast socket for sending logging & monitoring data
 	multicast_socket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -379,7 +410,7 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	l.l_onoff  = 0;  // whether to linger
 	l.l_linger = 0;  // seconds to linger for
 	get_ok = setsockopt(multicast_socket, SOL_SOCKET, SO_LINGER, (char*) &l, sizeof(l));
-	int a =1;
+	int a = 1;
 	setsockopt(multicast_socket, SOL_SOCKET, SO_REUSEADDR, &a, sizeof(a));
 	if(get_ok!=0){
 		Log(std::string{"Failed to set multicast socket linger with error "}+strerror(errno),v_error);
@@ -389,6 +420,7 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	// set the socket to non-blocking mode - seems like a good idea...? XXX
 	get_ok = fcntl(multicast_socket, F_SETFL, O_NONBLOCK);
 	if(get_ok!=0){
+		// maybe this is not essential..? XXX
 		Log(std::string{"Failed to set multicast socket to non-blocking with error "}+strerror(errno),v_error);
 		//return false;
 	}
@@ -435,9 +467,35 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 		return false;
 	}
 	
+	multicast_listener_args = new MulticastReceive_args;
+	multicast_listener_args->parent = this;
+	multicast_listener_args->finished = false;
+	multicast_listener_args->multicast_socket = multicast_socket;
+	multicast_listener_args->multicast_addr = &multicast_addr;
+	multicast_listener_args->multicast_addrlen = multicast_addrlen;
 	// we can poll with zmq ...
-	in_polls.emplace_back(zmq::pollitem_t{NULL, multicast_socket, ZMQ_POLLIN, 0});
-	out_polls.emplace_back(zmq::pollitem_t{NULL, multicast_socket, ZMQ_POLLOUT, 0});
+	multicast_listener_args->poll = zmq::pollitem_t{NULL, multicast_socket, ZMQ_POLLIN, 0};
+	m_util.CreateThread("multicast_receiver", &GetMulticastMessages, multicast_listener_args);
+	
+	// the majority of our messages come via multicast, and each may be quite large,
+	// with the corresponding queries taking a while (order seconds).
+	// We need to make sure these don't delay responses on Read/Write sockets
+	// which have a timeout, so let's handle multicasts in a separate thread
+	for(int i=0; i<num_multicast_threads; ++i){
+		MulticastWorker_args* thread_args=new MulticastWorker_args();
+		thread_args->parent = this;
+		thread_args->running=true;
+		thread_args->finished=false;
+		thread_args->conn = m_databases.at("daq").OpenConnection();
+		if(thread_args->conn==nullptr){
+			Log("Failed to open connection to database for multicast thread!",v_error);
+			return false;
+		}
+		thread_args->last_log_insert = boost::posix_time::microsec_clock::universal_time();
+		thread_args->last_mon_insert = boost::posix_time::microsec_clock::universal_time();
+		m_util.CreateThread("multicast_worker", &MulticastWorker, thread_args);
+		multicast_worker_args.push_back(thread_args);
+	}
 	
 	return true;
 }
@@ -532,6 +590,8 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 		// don't linger too long, it looks like the program crashed.
 		clt_sub_socket->setsockopt(ZMQ_LINGER, 10);
 		clt_sub_socket->setsockopt(ZMQ_SUBSCRIBE,"",0);
+		clt_sub_socket->setsockopt(ZMQ_RCVHWM,10000);
+		clt_sub_socket->setsockopt(ZMQ_BACKLOG,1000);
 		// we will connect this socket to clients with the utilities class
 	}
 	
@@ -540,6 +600,8 @@ bool ReceiveSQL::InitZMQ(Store& m_variables){
 	clt_rtr_socket = new zmq::socket_t(*context, ZMQ_ROUTER);
 	clt_rtr_socket->setsockopt(ZMQ_SNDTIMEO, clt_rtr_socket_timeout);
 	clt_rtr_socket->setsockopt(ZMQ_RCVTIMEO, clt_rtr_socket_timeout);
+	clt_rtr_socket->setsockopt(ZMQ_RCVHWM,10000);
+	clt_rtr_socket->setsockopt(ZMQ_BACKLOG,1000);
 	// make router transfer connections with an already seen ZMQ_IDENTITY to a new connection
 	// rather than rejecting the new connection attempt.
 	/*
@@ -676,6 +738,14 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 	
 	// note that it is not necessary to register the RemoteControl service,
 	// this is automatically done by the ServiceDiscovery class.
+	
+	// this will be done in a bg thread
+	findclients_args = new FindClients_args;
+	findclients_args->parent = this;
+	findclients_args->utilities = utilities;
+	
+	m_util.CreateThread("findclients", &FindNewClients_v2, findclients_args);
+	
 	return true;
 }
 
@@ -712,6 +782,9 @@ bool ReceiveSQL::InitControls(Store& m_variables){
 	
 	SC_vars.Add("Clients",SlowControlElementType(INFO));
 	SC_vars["Clients"]->SetValue("None");
+	
+	SC_vars.Add("ClearConnections",SlowControlElementType(BUTTON));
+	SC_vars["ClearConnections"]->SetValue(false);
 	
 	// the SlowControlCollection thread listens for requests to get or set the registered controls,
 	// and responds with or updates its internal control values. Note that (for now) it does not
@@ -804,6 +877,7 @@ bool ReceiveSQL::InitMessaging(Store& m_variables){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
+/*
 bool ReceiveSQL::FindNewClients(){
 	
 	int new_connections=0;
@@ -830,37 +904,36 @@ bool ReceiveSQL::FindNewClients(){
 		Log("No new clients found",21);
 	}
 	
-	/* needs fixing to uncomment
-	std::cout<<"We have: "<<connections.size()<<" connected clients"<<std::endl;
-	std::cout<<"Connections are: "<<std::endl;
-	for(auto&& athing : connections){
-		std::string service;
-		athing.second->Get("msg_value",service);
-		std::cout<<service<<" connected on "<<athing.first<<std::endl;
-	}
-	*/
-	
 	return true;
 }
+*/
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::FindNewClients_v2(){
+void ReceiveSQL::FindNewClients_v2(Thread_args* arg){
 	
-	int clt_rtr_conns = clt_rtr_connections.size();
-	int clt_sub_conns = clt_sub_connections.size();
-	int mm_conns = mm_rcv_connections.size();
+	// check for new clients
+	FindClients_args* m_args=reinterpret_cast<FindClients_args*>(arg);
+	ReceiveSQL& p = *m_args->parent;
 	
-	int new_connections = utilities->ConnectToEndpoints(clt_rtr_socket, clt_rtr_connections, clt_rtr_port, clt_sub_socket, clt_sub_connections, clt_sub_port, mm_rcv_socket, mm_rcv_connections, mm_rcv_port);
+	int clt_rtr_conns = m_args->clt_rtr_connections.size();
+	int clt_sub_conns = m_args->clt_sub_connections.size();
+	int mm_conns = m_args->mm_rcv_connections.size();
+	
+	p.Log("checking for new clients",22);
+	int new_connections = m_args->utilities->ConnectToEndpoints(p.clt_rtr_socket, m_args->clt_rtr_connections, p.clt_rtr_port, p.clt_rtr_mtx,
+	                                                            p.clt_sub_socket, m_args->clt_sub_connections, p.clt_sub_port, p.clt_sub_mtx,
+	                                                            p.mm_rcv_socket, m_args->mm_rcv_connections, p.mm_rcv_port, p.mm_rcv_mtx);
 	
 	if(new_connections>0){
-		Log("Made "+std::to_string(new_connections)+" new connections!",2);
-		Log("Made "+std::to_string(clt_rtr_connections.size()-clt_rtr_conns)
+		p.Log("Made "+std::to_string(new_connections)+" new connections!",2);
+		p.Log("Made "+std::to_string(m_args->clt_rtr_connections.size()-clt_rtr_conns)
 		   +" new read/reply socket connections",3);
-		Log("Made "+std::to_string(clt_sub_connections.size()-clt_sub_conns)
+		p.Log("Made "+std::to_string(m_args->clt_sub_connections.size()-clt_sub_conns)
 		   +" new write socket connections",3);
-		Log("Made "+std::to_string(mm_rcv_connections.size()-mm_conns)
+		p.Log("Made "+std::to_string(m_args->mm_rcv_connections.size()-mm_conns)
 		   +" new middleman socket connections",3);
+		
 		// FIXME only print out new elements
 		/*
 		for(auto&& acon : clt_rtr_connections){
@@ -877,10 +950,10 @@ bool ReceiveSQL::FindNewClients_v2(){
 		
 		// update the list of clients so they can be queried
 		std::map<std::string,std::string> clientsmap;
-		for(std::pair<const std::string, Store*>& aservice : clt_rtr_connections){
+		for(std::pair<const std::string, Store*>& aservice : m_args->clt_rtr_connections){
 			clientsmap.emplace(aservice.first,"R");
 		}
-		for(std::pair<const std::string, Store*>& aservice : clt_sub_connections){
+		for(std::pair<const std::string, Store*>& aservice : m_args->clt_sub_connections){
 			if(!clientsmap.count(aservice.first)){
 				clientsmap.emplace(aservice.first,"W");
 			} else {
@@ -893,13 +966,15 @@ bool ReceiveSQL::FindNewClients_v2(){
 			if(!clientlist.empty()) clientlist+=", ";
 			clientlist += aclient.first+": "+aclient.second;
 		}
-		SC_vars["Clients"]->SetValue(clientlist);
+		p.SC_vars["Clients"]->SetValue(clientlist);
 		
 	} else {
-		Log("No new clients found",21);
+		p.Log("No new clients found",22);
 	}
 	
-	return true;
+	usleep(100000);
+	
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -907,14 +982,16 @@ bool ReceiveSQL::FindNewClients_v2(){
 bool ReceiveSQL::GetClientWriteQueries(){
 	
 	// see if we had any write requests from clients
-	if(in_polls.at(3).revents & ZMQ_POLLIN){
+	if(in_polls.at(2).revents & ZMQ_POLLIN){
 		Log(">>> got a write query from client",3);
 		
 		++write_queries_recvd;
 		// we did. receive next message.
 		std::vector<zmq::message_t> outputs;
 		
+		clt_sub_mtx.lock();
 		get_ok = Receive(clt_sub_socket, outputs);
+		clt_sub_mtx.unlock();
 		
 		if(not get_ok){
 			Log(Concat("error receiving part ",outputs.size()+1," of Write query from client"),1);
@@ -1021,7 +1098,7 @@ bool ReceiveSQL::GetClientWriteQueries(){
 			}
 			
 			// construct a Query object to encapsulate the query and enqueue it.
-			Query qry{outputs.at(1-o),outputs.at(2-o), database, query};
+			Query qry{outputs.at(1-o),outputs.at(2-o), database, topic, query};
 			
 			Log(Concat("QUERY WAS: '",qry.query,"'"),4);
 			wrt_txn_queue.emplace(key, qry);
@@ -1061,11 +1138,15 @@ bool ReceiveSQL::WriteDeviceConfigToQuery(const std::string& message, BStore& co
 		return false;
 	}
 	
+	// TODO Trim whitespace on all fields; in particular device name is used
+	// for versioning, so trailing whitespace will make 'LED ' different from 'LED' for e.g.
+	TrimWS(device);
+	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(device, device);
-	get_ok &= a_database.pqxx_quote(author, author);
-	get_ok &= a_database.pqxx_quote(description, description);
-	get_ok &= a_database.pqxx_quote(data, data);
+	get_ok  = a_database.pqxx_quote(nullptr, device, device);
+	get_ok &= a_database.pqxx_quote(nullptr, author, author);
+	get_ok &= a_database.pqxx_quote(nullptr, description, description);
+	get_ok &= a_database.pqxx_quote(nullptr, data, data);
 	if(!get_ok){
 		Log("WriteDeviceConfigToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1114,11 +1195,13 @@ bool ReceiveSQL::WriteRunConfigToQuery(const std::string& message, BStore& confi
 		return false;
 	}
 	
+	TrimWS(name);
+	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(name, name);
-	get_ok &= a_database.pqxx_quote(author, author);
-	get_ok &= a_database.pqxx_quote(description, description);
-	get_ok &= a_database.pqxx_quote(data, data);
+	get_ok  = a_database.pqxx_quote(nullptr, name, name);
+	get_ok &= a_database.pqxx_quote(nullptr, author, author);
+	get_ok &= a_database.pqxx_quote(nullptr, description, description);
+	get_ok &= a_database.pqxx_quote(nullptr, data, data);
 	if(!get_ok){
 		Log("WriteRunConfigToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1165,10 +1248,12 @@ bool ReceiveSQL::WriteCalibrationToQuery(const std::string& message, BStore& cal
 		return false;
 	}
 	
+	TrimWS(device);
+	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(device, device);
-	get_ok &= a_database.pqxx_quote(description, description);
-	get_ok &= a_database.pqxx_quote(data, data);
+	get_ok  = a_database.pqxx_quote(nullptr, device, device);
+	get_ok &= a_database.pqxx_quote(nullptr, description, description);
+	get_ok &= a_database.pqxx_quote(nullptr, data, data);
 	if(!get_ok){
 		Log("WriteCalibrationToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1215,9 +1300,11 @@ bool ReceiveSQL::WriteAlarmToQuery(const std::string& message, BStore& alarm, st
 		return false;
 	}
 	
+	TrimWS(device);
+	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(device, device);
-	get_ok &= a_database.pqxx_quote(msg, msg);
+	get_ok  = a_database.pqxx_quote(nullptr, device, device);
+	get_ok &= a_database.pqxx_quote(nullptr, msg, msg);
 	if(!get_ok){
 		Log("WriteAlarmToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1264,9 +1351,9 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 	}
 	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(plot_name, plot_name);
-	get_ok &= a_database.pqxx_quote(draw_options, draw_options);
-	get_ok &= a_database.pqxx_quote(json_data, json_data);
+	get_ok  = a_database.pqxx_quote(nullptr, plot_name, plot_name);
+	get_ok &= a_database.pqxx_quote(nullptr, draw_options, draw_options);
+	get_ok &= a_database.pqxx_quote(nullptr, json_data, json_data);
 	if(!get_ok){
 		Log("WriteRootPlotToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1298,11 +1385,10 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 bool ReceiveSQL::WritePlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out){
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
-
+	
 	std::string name, x, y, title, xlabel, ylabel, info;
-
 	get_ok = 1;
-
+	
 	// initialize a variable with the plot slot
 #define get(slot) if (!plot.Get(#slot, slot)) goto fail_get
 	get(name);
@@ -1313,16 +1399,16 @@ bool ReceiveSQL::WritePlotToQuery(const std::string& message, BStore& plot, std:
 	get(ylabel);
 	get(info);
 #undef get
-
-        // SQL sanitization
-#define quote(slot) if (!a_database.pqxx_quote(slot, slot)) goto fail_quote
-        quote(name);
-        quote(title);
-        quote(xlabel);
-        quote(ylabel);
-        quote(info);
-#undef quote
-
+	
+	// SQL sanitization
+	#define quote(slot) if (!a_database.pqxx_quote(nullptr, slot, slot)) goto fail_quote
+	quote(name);
+	quote(title);
+	quote(xlabel);
+	quote(ylabel);
+	quote(info);
+	#undef quote
+	
 	sql_out = "INSERT INTO plots (plot, x, y, title, xlabel, ylabel, info) VALUES ("
 		+ name   + ", "
 		+ x      + ", "
@@ -1388,14 +1474,16 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 bool ReceiveSQL::GetClientReadQueries(){
 	
 	// check if we had any read transactions dealt to us
-	if(in_polls.at(1).revents & ZMQ_POLLIN){
+	if(in_polls.at(0).revents & ZMQ_POLLIN){
 		Log(">>> got a read query from client",3);
 		
 		++read_queries_recvd;
 		// We do. receive the next query
 		std::vector<zmq::message_t> outputs;
 		
+		clt_rtr_mtx.lock();
 		get_ok = Receive(clt_rtr_socket, outputs);
+		clt_rtr_mtx.unlock();
 		
 		if(not get_ok){
 			Log(Concat("error receiving part ",outputs.size()+1," of Read query from client"),1);
@@ -1459,7 +1547,7 @@ bool ReceiveSQL::GetClientReadQueries(){
 			}
 			
 			// construct a Query object to encapsulate the query and enqueue it.
-			Query qry{outputs.at(0),outputs.at(2), database, query};
+			Query qry{outputs.at(0),outputs.at(2), database, topic, query};
 			rd_txn_queue.emplace(key, qry);
 			
 		} // else we've already got this message queued, ignore it.
@@ -1504,7 +1592,7 @@ bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& req
 	}
 	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(device, device);
+	get_ok  = a_database.pqxx_quote(nullptr, device, device);
 	if(!get_ok){
 		Log("ReadDeviceConfigToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1523,6 +1611,11 @@ bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& req
 		+ versionstring+";";
 	
 	Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"'"),12);
+	
+	unsigned long timestamp = time(nullptr);
+	std::string timestring;
+	TimeStringFromUnixSec(timestamp, timestring);
+	Log(Concat("Received config request '",sql_out,"' received at ",timestring),0);
 	
 	return true;
 }
@@ -1564,7 +1657,7 @@ bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& reques
 		}
 		
 		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(config_name, config_name);
+		get_ok  = a_database.pqxx_quote(nullptr, config_name, config_name);
 		if(!get_ok){
 			Log("ReadRunConfigToQuery: error quoting fields in message '"+message+"'",v_error);
 			return false;
@@ -1605,7 +1698,7 @@ bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& requ
 	}
 	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(device, device);
+	get_ok  = a_database.pqxx_quote(nullptr, device, device);
 	if(!get_ok){
 		Log("ReadCalibrationToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1646,7 +1739,7 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 	}
 	
 	// SQL sanitization
-	get_ok  = a_database.pqxx_quote(plot_name, plot_name);
+	get_ok  = a_database.pqxx_quote(nullptr, plot_name, plot_name);
 	if(!get_ok){
 		Log("ReadRootPlotToQuery: error quoting fields in message '"+message+"'",v_error);
 		return false;
@@ -1681,7 +1774,7 @@ bool ReceiveSQL::ReadPlotToQuery(const std::string& message, BStore& request, st
 	}
 
 	// SQL sanitization
-	get_ok = a_database.pqxx_quote(name, name);
+	get_ok = a_database.pqxx_quote(nullptr, name, name);
 	if (!get_ok) {
 		Log("ReadPlotToQuery: error quoting fields in message '" + message + "'", v_error);
 		return false;
@@ -1730,73 +1823,71 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 
-bool ReceiveSQL::GetMulticastMessages(){
+void ReceiveSQL::GetMulticastMessages(Thread_args* arg){
 	
 	// check for incoming message
+	MulticastReceive_args* m_args=reinterpret_cast<MulticastReceive_args*>(arg);
+	ReceiveSQL& p = *m_args->parent;
+	
+	if(m_args->finished) return;
+	
+	// check if parent has told us to finalise
+	if(!m_args->running){
+		// parent has told us to finalise
+		// close the socket
+		close(p.multicast_socket);
+		m_args->finished=true;
+	}
+	
+	// poll multicast socket
+	zmq::poll(&m_args->poll, 1, 100);
 	
 	// see if we had any multicast messages
-	if(in_polls.at(0).revents & ZMQ_POLLIN){
-		Log(">>> got a multicast message from client",10);
-		++multicasts_recvd;
+	if(m_args->poll.revents & ZMQ_POLLIN){
+		//p.Log(">>> got a multicast message from client",10);
+		++p.multicasts_recvd;
 		
 		// read the messge
-		char message[655355]; // theoretical maximum UDP buffer size
-		int cnt = recvfrom(multicast_socket, message, sizeof(message), 0, (struct sockaddr*)&multicast_addr, &multicast_addrlen);
-		if(cnt <= 0){
-			Log(std::string{"Failed to receive on multicast socket with error '"}+strerror(errno)+"'",v_error);
-			++multicast_recv_fails;
-			return false;
+		m_args->get_ok = recvfrom(m_args->multicast_socket, m_args->message, sizeof(m_args->message), 0, (struct sockaddr*)m_args->multicast_addr, &m_args->multicast_addrlen);
+		if(m_args->get_ok <= 0){
+			p.Log(std::string{"Failed to receive on multicast socket with error '"}+strerror(errno)+"'",p.v_error);
+			++p.multicast_recv_fails;
+			return;
 		}
 		
-		Log("Received multicast message from "+std::string{inet_ntoa(multicast_addr.sin_addr)}
-		   +": '"+std::string{message}+"'",12);
+		p.Log("Received multicast message from "+std::string{inet_ntoa(m_args->multicast_addr->sin_addr)}
+		     +": '"+std::string{m_args->message}+"'",12);
 		
-		std::string database;
-		std::string query;
-		std::string topic;
-		get_ok = MulticastMessageToQuery(message, topic, database, query);
-		
-		if(!get_ok){
-			++multicast_recv_fails;
-			return false;
-		}
-		
-		// FIXME for now all messages go to daq database,
-		// probably need to make this a pair at least with first element a DB connection or name
-		if(topic=="logging" || topic=="monitoring" || topic=="rootplot"){
-			in_multicast_queue.emplace_back(query);
-			Log("Put "+topic+" msg in queue: '"+query+"'",12);
-			
-		} else {
-			// could not determine multicast type
-			Log(std::string{"Unrecognised topic '"}+topic+"' in multicast message '"+message+"'",v_error);
-			++multicast_recv_fails;
-			return false;
-			
-		}
+		p.in_multicast_queue_mtx.lock();
+		p.in_multicast_queue.emplace_back(m_args->message);
+		p.in_multicast_queue_mtx.unlock();
+		p.Log("Put multicast msg in queue: '"+std::string(m_args->message)+"'",12);
 		
 	} /*else { std::cout<<"no multicast messages"<<std::endl; }*/
 	
-	return true;
+	p.Log("Trimming In Multicast Deque",20);
+	m_args->get_ok = p.TrimVector("in_multicast_queue");
+	
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 // FIXME refactor to make code DRY
-bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out){
+bool ReceiveSQL::MulticastMessageToQuery(pqxx::connection* conn, const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out, BStore& tmp, JSONP& jsonp, int& ok){
 	Log(Concat("Forming SQL for logging message: '",message,"'"),12);
 	
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
-	BStore tmp;
-	get_ok = parser.Parse(message, tmp);
-	if(!get_ok){
+	tmp.Delete();
+	ok = jsonp.Parse(message, tmp);
+	if(!ok){
 		Log("MulticastMessageToQuery error parsing message json '"+message+"'",v_error);
 		++multicast_recv_fails;
 		return false;
 	}
 	
-	get_ok = tmp.Get("topic",topic_out);
-	if(!get_ok){
+	ok = tmp.Get("topic",topic_out);
+	if(!ok){
 		++multicast_recv_fails;
 		Log("MulticastMessageToQuery error, no topic in message '"+message+"'",v_error);
 		return false;
@@ -1815,20 +1906,20 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		uint64_t timestamp{0};
 		uint32_t severity;
 		std::string msg;
-		get_ok = tmp.Get("time",timestamp); // optional
-		get_ok = tmp.Get("device",device);
-		get_ok &= tmp.Get("severity",severity);
-		get_ok &= tmp.Get("message",msg);
-		if(!get_ok){
+		ok = tmp.Get("time",timestamp); // optional
+		ok = tmp.Get("device",device);
+		ok &= tmp.Get("severity",severity);
+		ok &= tmp.Get("message",msg);
+		if(!ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
 			++multicast_recv_fails;
 			return false;
 		}
 		
 		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		get_ok &= a_database.pqxx_quote(msg, msg);
-		if(!get_ok){
+		ok  = a_database.pqxx_quote(conn, device, device);
+		ok &= a_database.pqxx_quote(conn, msg, msg);
+		if(!ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
 			++multicast_recv_fails;
 			return false;
@@ -1838,15 +1929,16 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		// build an ISO 8601 timestamp ("2015-10-02 11:16:34+0100")
 		// (the trailing "+0100" is number of [hours][mins] in local timezone relative to UTC)
 		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
+		ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
-		sql_out = "INSERT INTO logging ( time, device, severity, message ) VALUES ( '"
+		//sql_out = "INSERT INTO logging ( time, device, severity, message ) VALUES ( '"
+		sql_out = "( '"                                             // XXX PARTIAL SQL FOR BATCH INSERTION!!!
 		        + timestring               + "',"
 		        + device                   + ","
 		        + std::to_string(severity) + ","
-		        + msg                      + ");";
+		        + msg                      + ")";
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),100);
 		
@@ -1863,32 +1955,33 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		uint64_t timestamp{0};
 		std::string data;
 		tmp.Get("time",timestamp); // optional
-		get_ok = tmp.Get("device",device);
-		get_ok &= tmp.Get("data",data);
-		if(!get_ok){
+		ok = tmp.Get("device",device);
+		ok &= tmp.Get("data",data);
+		if(!ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
 			++multicast_recv_fails;
 			return false;
 		}
 		
 		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(device, device);
-		get_ok &= a_database.pqxx_quote(data, data);
-		if(!get_ok){
+		ok  = a_database.pqxx_quote(conn, device, device);
+		ok &= a_database.pqxx_quote(conn, data, data);
+		if(!ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
 			++multicast_recv_fails;
 			return false;
 		}
 		
 		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
+		ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
-		sql_out = "INSERT INTO monitoring ( time, device, data ) VALUES ( '"
+		//sql_out = "INSERT INTO monitoring ( time, device, data ) VALUES ( '"
+		sql_out = "( '"                                      // XXX PARTIAL SQL FOR BATCH INSERTION!!!
 		        + timestring + "',"
 		        + device     + ","
-		        + data       + ");";
+		        + data       + ")";
 		
 		Log(Concat("Resulting SQL: '",sql_out,"', database: '",db_out,"', topic: ",topic_out),50);
 		
@@ -1906,28 +1999,28 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 		std::string data;
 		std::string draw_options;
 		tmp.Get("time",timestamp); // optional
-		get_ok = tmp.Get("plot_name",plot_name);
-		get_ok &= tmp.Get("data",data);
-		get_ok &= tmp.Get("draw_options",draw_options);
-		if(!get_ok){
+		ok = tmp.Get("plot_name",plot_name);
+		ok &= tmp.Get("data",data);
+		ok &= tmp.Get("draw_options",draw_options);
+		if(!ok){
 			Log("MulticastMessageToQuery: missing fields in message '"+message+"'",v_error);
 			++multicast_recv_fails;
 			return false;
 		}
 		
 		// SQL sanitization
-		get_ok  = a_database.pqxx_quote(plot_name, plot_name);
-		get_ok &= a_database.pqxx_quote(draw_options, draw_options);
-		get_ok &= a_database.pqxx_quote(data, data);
-		if(!get_ok){
+		ok  = a_database.pqxx_quote(conn, plot_name, plot_name);
+		ok &= a_database.pqxx_quote(conn, draw_options, draw_options);
+		ok &= a_database.pqxx_quote(conn, data, data);
+		if(!ok){
 			Log("MulticastMessageToQuery: error quoting fields in message '"+message+"'",v_error);
 			++multicast_recv_fails;
 			return false;
 		}
 		
 		std::string timestring;
-		get_ok = TimeStringFromUnixMs(timestamp, timestring);
-		if(!get_ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
+		ok = TimeStringFromUnixMs(timestamp, timestring);
+		if(!ok) timestring="now()"; // since multicast doesn't propagate back an error, assume now
 		
 		// form into a suitable SQL query
 		// FIXME this needs to insert into a temporary root plots table
@@ -1967,11 +2060,13 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 	// keep reading from the SUB socket until there are no more waiting messages.
 	// it's important we don't take any action until we've read out everything,
 	// to ensure we don't start negotiation based on old, stale requests.
-	while(in_polls.at(2).revents & ZMQ_POLLIN){
+	while(in_polls.at(1).revents & ZMQ_POLLIN){
 		
 		// We do. Receive it.
 		std::vector<zmq::message_t> outputs;
+		mm_rcv_mtx.lock();
 		get_ok = Receive(mm_rcv_socket, outputs);
+		mm_rcv_mtx.unlock();
 		if(not get_ok){
 			Log(Concat("error receiving message part ",outputs.size()+1," of message from middleman"),0);
 			++mm_broadcast_recv_fails;  // FIXME this includes negotiation requests and our own broadcasts
@@ -2059,7 +2154,7 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 		// but perhaps this message is stale:
 		// re-poll the socket and see if there is another message in the buffer
 		try {
-			get_ok = zmq::poll(&in_polls.at(2), 1, 0);
+			get_ok = zmq::poll(&in_polls.at(1), 1, 0);
 		} catch (zmq::error_t& err){
 			std::cerr<<"ReceiveSQL::GetMiddlemanCheckin poller caught "<<err.what()<<std::endl;
 			get_ok = -1;
@@ -2140,9 +2235,9 @@ bool ReceiveSQL::RunNextWriteQuery(){
 			return false;
 		}
 		std::string err;
-		next_msg.query_ok = m_databases.at(db).QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		next_msg.query_ok = m_databases.at(db).QueryAsJsons(nullptr, next_msg.query, &next_msg.response, &err);
 		if(not next_msg.query_ok){
-			Log(Concat("Write query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),1);
+			Log(Concat("Write query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),0);
 			++write_queries_failed;
 			next_msg.response = std::vector<std::string>{err};
 		}
@@ -2172,9 +2267,18 @@ bool ReceiveSQL::RunNextReadQuery(){
 			return false;
 		}
 		std::string err;
-		next_msg.query_ok = m_databases.at(db).QueryAsJsons(next_msg.query, &next_msg.response, &err);
+		next_msg.query_ok = m_databases.at(db).QueryAsJsons(nullptr, next_msg.query, &next_msg.response, &err);
+		
+		// XXX debug
+		if(next_msg.topic=="DEVCONFIG"){  // FINDME
+			unsigned long timestamp = time(nullptr);
+			std::string timestring;
+			TimeStringFromUnixSec(timestamp, timestring);
+			Log(Concat("Ran config request query '",next_msg.query,"' at ",timestring," result: ",next_msg.query_ok),0);
+		}
+		
 		if(not next_msg.query_ok){
-			Log(Concat("Read query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),1);
+			Log(Concat("Read query failed! Query was: \"",next_msg.query,"\", error was: '",err,"'"),0);
 			++read_queries_failed;
 			next_msg.response = std::vector<std::string>{err};
 		}
@@ -2191,37 +2295,111 @@ bool ReceiveSQL::RunNextReadQuery(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::RunNextMulticastMsg(){
+void ReceiveSQL::MulticastWorker(Thread_args* arg){
 	
-	// insert our next fire-and-forget message, if we have one
-	if(in_multicast_queue.size()){
-		Log("Inserting next multicast message to DB: we have "+std::to_string(in_multicast_queue.size())
-		    +" messages to process",13);
+	MulticastWorker_args* m_args=reinterpret_cast<MulticastWorker_args*>(arg);
+	ReceiveSQL& p = *m_args->parent;
+	
+	if(m_args->finished) return;
+	
+	// check if parent has new messages for us
+	std::vector<std::string> multicast_msg_queue;
+	p.in_multicast_queue_mtx.lock();
+	if(p.in_multicast_queue.empty()){
+		p.in_multicast_queue_mtx.unlock();
 		
-		std::string next_msg = in_multicast_queue.front();
-		auto t_start = std::chrono::high_resolution_clock::now();
-		get_ok = m_databases.at("daq").Query(next_msg);  // FIXME hard-coded db name
+		// check if parent has told us to finalise
+		if(!m_args->running){
+			m_args->finished=true;
+		}
+		
+		usleep(100);  // don't keep locking it too often
+		return;
+		
+	}
+	
+	// parent has messages for us. grab the message queue, swapping to give them a new one
+	std::swap(p.in_multicast_queue, multicast_msg_queue);
+	p.in_multicast_queue_mtx.unlock();
+	
+	p.multicasts_waiting = multicast_msg_queue.size();
+	p.Log("Inserting next multicast message to DB: we have "+std::to_string(multicast_msg_queue.size())
+	     +" messages to process",13);
+	
+	// loop over and run each query
+	for(std::string& next_msg : multicast_msg_queue){
+		
+		m_args->get_ok = p.MulticastMessageToQuery(m_args->conn, next_msg, m_args->topic, m_args->database, m_args->query, m_args->tmp, m_args->jsonp, m_args->get_ok);
+		
+		if(!m_args->get_ok){
+			++p.multicast_recv_fails;
+			continue;
+		}
+		
+		// FIXME for now all messages go to daq database,
+		// probably need to make this a pair at least with first element a DB connection or name
+		if(m_args->topic!="logging" && m_args->topic!="monitoring" && m_args->topic!="rootplot"){
+			// could not determine multicast type
+			p.Log(std::string{"Unrecognised topic '"}+m_args->topic+"' in multicast message '"+next_msg+"'",p.v_error);
+			++p.multicast_recv_fails;
+			continue;
+		} else if(m_args->topic=="logging"){
+			m_args->logmsgs.push_back(m_args->query);
+		} else {
+			m_args->monmsgs.push_back(m_args->query);
+		}
+		
+	}
+	
+	// merge all messages and do batch insertion
+	std::vector<std::string>* msgset=nullptr;
+	boost::posix_time::ptime* last_insert=nullptr;
+	for(int i=0; i<2; ++i){
+		if(i==0){
+			msgset = &m_args->logmsgs;
+			m_args->query = "INSERT INTO logging ( time, device, severity, message ) VALUES ";
+			last_insert = &m_args->last_log_insert;
+		} else {
+			msgset = &m_args->monmsgs;
+			m_args->query = "INSERT INTO monitoring ( time, device, data ) VALUES ";
+			last_insert = &m_args->last_mon_insert;
+		}
+		size_t nmsgs = msgset->size();
+		boost::posix_time::time_duration lapse = *last_insert - boost::posix_time::microsec_clock::universal_time();
+		if(nmsgs < p.batch_size && lapse.total_seconds() < 30) continue;
+		
+		for(size_t i=0; i<nmsgs; ++i){
+			if(i!=0) m_args->query += ", ";
+			m_args->query += msgset->at(i);
+		}
+		m_args->query += ";";
+		msgset->resize(0);
+		
+		// run a single batch insertion to minimise number of transactions
+		//auto t_start = std::chrono::high_resolution_clock::now();
+		m_args->get_ok = p.m_databases.at(m_args->database).Query(m_args->conn, m_args->query);  // FIXME hard-coded db name
+		p.Log("batch insert of "+std::to_string(nmsgs)+" multicasts",2);
+		*last_insert = boost::posix_time::microsec_clock::universal_time();
+		/*
 		auto t_end = std::chrono::high_resolution_clock::now();
 		if(std::chrono::duration_cast<std::chrono::milliseconds>(t_end-t_start).count()>1000){
-			Log("Slow multicast query: '"+next_msg+"' took "+
-			std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t_end-t_start).count())+" ms",v_warning);
+			//p.Log("Slow multicast query: '"+m_args->query+"' took "+
+			p.Log("Slow multicast query took "+
+			std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t_end-t_start).count())+" ms",p.v_warning);
 		}
+		*/
 		
-		if(not get_ok){
+		if(not m_args->get_ok){
 			// something went wrong
-			std::cerr<<"Error inserting logmessage '"<<next_msg<<"' into database"<<std::endl;
-			// can't use Log or we end up in a circular loop
-			in_multicast_queue.pop_front();
-			++multicast_queries_failed;
-			return false;
+			std::cerr<<"Error inserting logmessage '"<<m_args->query<<"' into database"<<std::endl;
+			// can't use Log or we end up in a circular loop since Log is a multicast query itself.
+			p.multicast_queries_failed+=nmsgs;   // XXX FIXME these trackers won't work any more with batch insertion
 		}
-		
-		// remove the message from the queue
-		in_multicast_queue.pop_front();
-		
-	} // else no log messages for now
+		p.multicasts_waiting-=nmsgs;
+	}
 	
-	return true;
+	
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -2234,7 +2412,7 @@ bool ReceiveSQL::SendNextReply(){
 	if(resp_queue.size()){
 		
 		// check we had a listener ready
-		if(out_polls.at(1).revents & ZMQ_POLLOUT){
+		if(out_polls.at(0).revents & ZMQ_POLLOUT){
 			
 			// OK to send! Get the message to acknowledge
 			Query& next_msg = resp_queue.begin()->second;
@@ -2246,13 +2424,14 @@ bool ReceiveSQL::SendNextReply(){
 			
 			std::string client_str(reinterpret_cast<char*>(next_msg.client_id.data()));
 			uint32_t* msgID = reinterpret_cast<uint32_t*>(next_msg.message_id.data());
-			Log("Sending next reply to ZMQ IDENTITY '"+client_str+"' for msg "+std::to_string(*msgID),1);
+			Log("Sending next reply to ZMQ IDENTITY '"+client_str+"' for msg "+std::to_string(*msgID),12);
 			
 			// as soon as we send a zmq::message_t (i.e. client_id and message_id), they are "used up":
 			// the 'message.size()' becomes 0 and they strictly no longer retain their contents.
 			// to keep a copy cached for re-sending we need to explicitly make a copy now.
 			Query qrycpy(next_msg);  // (the Query copy-constructor invokes zmq::message_t->copy on members)
 			
+			clt_rtr_mtx.lock();
 			if(next_msg.response.size()==0){
 				try{
 					get_ok = Send(clt_rtr_socket,
@@ -2277,6 +2456,7 @@ bool ReceiveSQL::SendNextReply(){
 					get_ok=false;
 				}
 			}
+			clt_rtr_mtx.unlock();
 			
 			if(get_ok){
 				// all parts sent successfully, add to the sent cache
@@ -2297,6 +2477,13 @@ bool ReceiveSQL::SendNextReply(){
 				}
 			} // end send ok check
 			
+			if(qrycpy.topic=="DEVCONFIG"){
+				unsigned long timestamp = time(nullptr);
+				std::string timestring;
+				TimeStringFromUnixSec(timestamp, timestring);
+				Log(Concat("Replied config request '",qrycpy.query,"' at ",timestring," result: ",get_ok),0);
+			}
+			
 		} // else no available listeners
 		
 	} // else no responses to send
@@ -2316,7 +2503,7 @@ bool ReceiveSQL::SendNextMulticast(){
 	if(out_multicast_queue.size()){
 		
 		// check we had a listener ready
-		if(out_polls.at(0).revents & ZMQ_POLLOUT){
+		if(true){  // not relevnt for sending multicast?
 			
 			// OK to send! Get the message
 			std::string& message = out_multicast_queue.front();
@@ -2352,7 +2539,7 @@ bool ReceiveSQL::BroadcastPresence(){
 	
 	if(elapsed_time.is_negative()){
 		
-		if(out_polls.at(2).revents & ZMQ_POLLOUT){
+		if(out_polls.at(1).revents & ZMQ_POLLOUT){
 			
 			++mm_broadcasts_sent;
 			uint32_t msg = am_master;
@@ -2444,15 +2631,12 @@ bool ReceiveSQL::TrimQueue(const std::string& queuename){
 
 bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 	
-	// check in or out log message queue size and do the same
+	// check message dequeue size and do the same
 	std::deque<std::string>* queue;
 	unsigned long* drop_count;
 	
 	// check which queue we're managing
-	if(queuename=="in_multicast_queue"){
-		queue = &in_multicast_queue;
-		drop_count = &dropped_multicast_in;
-	} else if(queuename=="out_multicast_queue"){
+	if(queuename=="out_multicast_queue"){
 		queue = &out_multicast_queue;
 		drop_count = &dropped_logs_out;
 	} else {
@@ -2474,6 +2658,51 @@ bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 		           ") is approaching drop limit (",drop_limit,") !",
 		           "Is the network down, or responding slowly?"),1);
 	}
+	
+	return true;
+}
+
+// ««-------------- ≪ °◇◆◇° ≫ --------------»»
+
+bool ReceiveSQL::TrimVector(const std::string& queuename){
+	
+	// check message vector size and do the same
+	std::vector<std::string>* queue;
+	unsigned long* drop_count;
+	
+	// check which queue we're managing
+	if(queuename=="in_multicast_queue"){
+		queue = &in_multicast_queue;
+		drop_count = &dropped_multicast_in;
+	} else {
+		Log(Concat("TrimVector called with unknown message queue '",queuename,"'"),0);
+		return false;
+	}
+	
+	// FIXME this trimming process needs to be done better for background threads
+	// since we have some messages in the thread and some in the parent,
+	// so we need to trim in two places and use mutexes when handling parent one....
+	in_multicast_queue_mtx.lock();
+	
+	// FIXME better than queue size would be to look at messages older than a certain time
+	// and trim based on that, since how well we're keeping up is more about how long
+	// each query takes, not about how many we have waiting.
+	if(queue->size() > drop_limit){
+		int to_drop = queue->size() - drop_limit;
+		in_multicast_queue.erase(in_multicast_queue.begin(), in_multicast_queue.begin()+to_drop);
+		in_multicast_queue_mtx.unlock();
+		
+		Log(Concat("Warning! Number of waiting elements in queue ",queuename," (",queue->size(),
+		           ") is over limit (",drop_limit,")! Dropping ",to_drop," messages!"),0);
+		*drop_count += to_drop;
+		
+	// check if we need to warn about being close to the limit
+	} else if(queue->size() > warn_limit){
+		Log(Concat("Warning! Number of waiting elements in ",queuename," (",queue->size(),
+		           ") is approaching drop limit (",drop_limit,") !",
+		           "Is the network down, or responding slowly?"),1);
+	}
+	in_multicast_queue_mtx.unlock();
 	
 	return true;
 }
@@ -2526,6 +2755,10 @@ bool ReceiveSQL::UpdateControls(){
 	SC_vars["Quit"]->GetValue(quit);
 	if(quit) DoQuit(quit);
 	
+	bool clearconnections=false;
+	SC_vars["ClearConnections"]->GetValue(clearconnections);
+	if(clearconnections) ClearConnections(clearconnections);
+	
 	return true;
 }
 
@@ -2542,8 +2775,10 @@ bool ReceiveSQL::TrackStats(){
 		// of reads/writes since last time. So get the last values
 		unsigned long last_write_query_count;
 		unsigned long last_read_query_count;
+		unsigned long last_multicast_count;
 		MonitoringStore.Get("write_queries_recvd", last_write_query_count);
 		MonitoringStore.Get("read_queries_recvd", last_read_query_count);
+		MonitoringStore.Get("multicasts_recvd", last_multicast_count);
 		
 		// calculate rates are per minute
 		elapsed_time = boost::posix_time::microsec_clock::universal_time() - last_stats_calc;
@@ -2552,6 +2787,8 @@ bool ReceiveSQL::TrackStats(){
 		    ((read_queries_recvd - last_read_query_count) * 60.) / elapsed_time.total_seconds();
 		float write_query_rate = (elapsed_time.total_seconds()==0) ? 0 :
 		    ((write_queries_recvd - last_write_query_count) * 60.) / elapsed_time.total_seconds();
+		float multicast_rate = (elapsed_time.total_seconds()==0) ? 0 :
+		    ((multicasts_recvd - last_multicast_count) * 60.) / elapsed_time.total_seconds();
 		
 		// dump all stats into a Store.
 		MonitoringStore.Set("min_loop_time",min_loop_ms);
@@ -2623,12 +2860,21 @@ bool ReceiveSQL::TrackStats(){
 		db_verbosity = db_verbosity_tmp;
 		*/
 		if(am_master){
+			/*
 			std::string sql_qry = "INSERT INTO monitoring ( time, device, data ) VALUES ( 'now()', '"
 			                    + my_id+"', '"+json_stats+"' );";
-			in_multicast_queue.push_back(sql_qry);
+			*/
+			
+			std::string multicast_msg = "{ \"topic\":\"monitoring\""
+			                            ", \"device\":\""+escape_json(my_id)+"\""
+			                          + ", \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
+			                          + ", \"data\":\""+json_stats+"\" }";
+			in_multicast_queue_mtx.lock();
+			in_multicast_queue.push_back(multicast_msg);
+			in_multicast_queue_mtx.unlock();
 		} else {
 			std::string multicast_msg = "{ \"topic\":\"monitoring\""
-			                            ", \"device\":\""+escape_json(my_id)+"\", "
+			                            ", \"device\":\""+escape_json(my_id)+"\""
 			                          + ", \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
 			                          + ", \"data\":\""+json_stats+"\" }";
 			out_multicast_queue.push_back(multicast_msg);
@@ -2707,7 +2953,7 @@ bool ReceiveSQL::NegotiationRequest(){
 		if(first_send || elapsed_time.is_negative()){
 			
 			// send out our message
-			int ret = PollAndSend(mm_snd_socket, out_polls.at(2), outpoll_timeout, my_id, our_header, our_timestamp);
+			int ret = PollAndSend(mm_snd_socket, out_polls.at(1), outpoll_timeout, my_id, our_header, our_timestamp);
 			
 			// check for errors
 			if(ret==-3) Log("Error polling out socket in NegotiateMaster() call!",0);
@@ -2725,7 +2971,9 @@ bool ReceiveSQL::NegotiationRequest(){
 		// receive the other middleman's response
 		std::vector<zmq::message_t> messages;
 		
-		int ret = PollAndReceive(mm_rcv_socket, in_polls.at(2), inpoll_timeout, messages);
+		mm_rcv_mtx.lock();
+		int ret = PollAndReceive(mm_rcv_socket, in_polls.at(1), inpoll_timeout, messages);
+		mm_rcv_mtx.unlock();
 		
 		// chech for errors
 		if(ret==-3) Log("Error polling in socket in NegotiateMaster() call!",0);
@@ -2833,7 +3081,7 @@ bool ReceiveSQL::NegotiationRequest(){
 		// they must've opened negotiations at the same time we did. They may be expecting a reply.
 		
 		// send the reply
-		int ret = PollAndSend(mm_snd_socket, out_polls.at(2), outpoll_timeout, my_id, our_header, our_timestamp);
+		int ret = PollAndSend(mm_snd_socket, out_polls.at(1), outpoll_timeout, my_id, our_header, our_timestamp);
 		
 		// handle errors
 		if(ret==-3) Log("Error polling out socket in NegotiateMaster() call!",0);
@@ -2892,7 +3140,7 @@ bool ReceiveSQL::NegotiationReply(const std::string& their_header, const std::st
 	}
 	
 	// inform the other middleman
-	int ret = PollAndSend(mm_snd_socket, out_polls.at(2), 500, my_id, our_header, our_timestamp);
+	int ret = PollAndSend(mm_snd_socket, out_polls.at(1), 500, my_id, our_header, our_timestamp);
 	
 	// handle errors
 	if(ret==-3) Log("Error polling out socket in NegotiateMaster() call!",0);
@@ -2932,7 +3180,7 @@ bool ReceiveSQL::UpdateRole(){
 		
 		// promote the database out of recovery mode. 60s timeout.
 		std::string err;
-		get_ok = m_databases.begin()->second.Promote(60,&err); // FIXME multiple dbs?
+		get_ok = m_databases.begin()->second.Promote(nullptr, 60,&err); // FIXME multiple dbs?
 		
 		// should we also stop broadcasting ourself as a source of logging messages?
 		utilities->RemoveService("logging");
@@ -2967,7 +3215,7 @@ bool ReceiveSQL::UpdateRole(){
 		std::string err;
 		
 		// demote the database to standby. 60s timeout.
-		get_ok = m_databases.begin()->second.Demote(60,&err); // FIXME multiple dbs?
+		get_ok = m_databases.begin()->second.Demote(nullptr, 60,&err); // FIXME multiple dbs?
 		
 		// check for errors
 		if(get_ok){
@@ -3077,7 +3325,7 @@ bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
 	std::string err;
 	std::vector<std::string> results;
 	
-	bool query_ok = m_databases.begin()->second.QueryAsStrings(query, &results, 'r', &err); // FIXME multiple dbs?
+	bool query_ok = m_databases.begin()->second.QueryAsStrings(nullptr, query, &results, 'r', &err); // FIXME multiple dbs?
 	
 	if(not query_ok || results.size()==0){
 		Log(Concat("Error getting last commit timestamp in negotiation! ",
@@ -3093,13 +3341,13 @@ bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TimeStringFromUnixSec(uint64_t timestamp, std::string& timestring){
+bool ReceiveSQL::TimeStringFromUnixSec(const uint64_t& timestamp, std::string& timestring){
 	return TimeStringFromUnixMs(timestamp*1000, timestring);
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::TimeStringFromUnixMs(uint64_t timestamp, std::string& timestring){
+bool ReceiveSQL::TimeStringFromUnixMs(const uint64_t& timestamp, std::string& timestring){
 	
 	if(timestamp==0){
 		timestring="now()";
@@ -3107,7 +3355,7 @@ bool ReceiveSQL::TimeStringFromUnixMs(uint64_t timestamp, std::string& timestrin
 		//std::cout<<"converting time "<<timestamp<<" to timestring"<<std::endl;
 		timestring.resize(23, '\0');
 		int timestamp_ms = timestamp%1000;
-		time_t timestamp_sec = timestamp*0.001;  // time_t is equivalent to uint64_t
+		time_t timestamp_sec = timestamp/1000;  // time_t is equivalent to uint64_t
 		struct tm* timeptr = gmtime(&timestamp_sec);
 		//std::cout<<"timeptr is "<<timeptr<<std::endl;
 		if(timeptr==0){
@@ -3161,6 +3409,21 @@ std::string ReceiveSQL::escape_json(std::string s){
 	} while(pos!=std::string::npos);
 	
 	return s;
+}
+
+inline void ReceiveSQL::TrimWS(std::string& s){
+	
+	// trim from start (in place)
+	s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+		return !std::isspace(ch);
+	}));
+	
+	// trim from end (in place)
+	s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+		return !std::isspace(ch);
+	}).base(), s.end());
+	
+	return;
 }
 
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
@@ -3316,6 +3579,8 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 	if(message_severity < db_verbosity){
 		// we'll either want to run this locally, or send it to the master, depending on our role
 		if(am_master){
+			
+			/*  XXX JSON decoding is done by multicast workers now
 			// queue up for logging to our local monitoring database
 			if(m_databases.empty()){
 				// right now we only need the connection for sanitizing the message.
@@ -3331,7 +3596,7 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			
 			// SQL sanitization
 			std::string msg;
-			get_ok = m_databases.begin()->second.pqxx_quote(message, msg);
+			get_ok = m_databases.begin()->second.pqxx_quote(nullptr, message, msg);
 			if(!get_ok){
 				std::cerr<<"Error sanitizing log message '"<<message<<"'"<<std::endl;
 				// can't use Log here as the embedded message would result in a circular loop!
@@ -3344,17 +3609,27 @@ bool ReceiveSQL::Log(const std::string& message, uint32_t message_severity){
 			                   + my_id                            + "',"
 			                   + std::to_string(message_severity) + ","
 			                   + msg                              + ");";
+			*/
 			
+			// form the required JSON
+			std::string logmsg = "{ \"topic\":\"logging\""
+			                     ", \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
+			                    +", \"device\":\""+escape_json(my_id)+"\""
+			                    +", \"severity\":"+std::to_string(message_severity)
+			                    +", \"message\":\""+escape_json(message)+"\" }";
+			
+			in_multicast_queue_mtx.lock();
 			in_multicast_queue.emplace_back(logmsg);
+			in_multicast_queue_mtx.unlock();
 			
 		} else {
 			// add to the queue of logging messages to send to the master over ZMQ
 			
 			// form the required JSON
 			std::string logmsg = "{ \"time\":"+std::to_string(time(nullptr)*1000)  // ms since unix epoch
-			                   +", \"device\":\""+escape_json(my_id)+"\""
-			                   +", \"severity\":"+std::to_string(message_severity)
-			                   +", \"message\":\""+escape_json(message)+"\" }";
+			                    +", \"device\":\""+escape_json(my_id)+"\""
+			                    +", \"severity\":"+std::to_string(message_severity)
+			                    +", \"message\":\""+escape_json(message)+"\" }";
 			
 			out_multicast_queue.emplace_back(logmsg);
 		}
@@ -3388,6 +3663,17 @@ bool ReceiveSQL::DoQuit(bool quit){
 		SC_vars["Status"]->SetValue("Quitting");
 	}
 	return true;
+}
+
+bool ReceiveSQL::ClearConnections(bool clearconnections){
+	if(!clearconnections) return true;
+	bool ok=true;
+	/* connection maps are now in FindNewClients thread args
+	ok = ok && utilities->ClearConnections(clt_rtr_socket, clt_rtr_connections);
+	ok = ok && utilities->ClearConnections(clt_sub_socket, clt_sub_connections);
+	ok = ok && utilities->ClearConnections(mm_rcv_socket, mm_rcv_connections);
+	*/
+	return ok;
 }
 
 //https://wiki.postgresql.org/wiki/What%27s_new_in_PostgreSQL_9.5#Commit_timestamp_tracking

@@ -13,17 +13,8 @@ void Postgres::SetVerbosity(int verb){
 // TODO probably could do better with the exception handling throughout this file
 pqxx::connection* Postgres::OpenConnection(std::string* err){
 	if(verbosity>v_debug) std::cout<<"Opening Connection"<<std::endl;
+	
 	try{
-		// if we already have a connection open, nothing to do
-		if(conn!=nullptr && conn->is_open()){
-			if(verbosity>v_debug) std::cout<<"Connection already open"<<std::endl;
-			return conn;
-		} else if(conn){
-			// conn not null, but is not open...
-			delete conn; // should we do this? e.g. lazy connections will open only on first use.
-		}
-		
-		// otherwise form the connection string
 		std::stringstream tmp;
 		if(dbname!="")   tmp<<" dbname="<<dbname;
 		if(port!=-1)     tmp<<" port="<<port;
@@ -34,11 +25,12 @@ pqxx::connection* Postgres::OpenConnection(std::string* err){
 		
 		// attempt to connect to the database
 		if(verbosity>v_debug) std::cout<<"connecting with string '"<<tmp.str()<<"'"<<std::endl;
-		conn = new pqxx::connection(tmp.str().c_str());
+		pqxx::connection* conn = new pqxx::connection(tmp.str().c_str());
 		
 		// verify we succeeded
 		// "don't use is_open(), use the broken_connection exception", they say. Hmm.
 		// but will that be thrown now, or only when we try to *use* the connection, for a transaction?
+		// may depend on the connection type... let's just check?
 		if(!conn->is_open()){
 			std::cerr<<"Failed to connect to the database! Connection string was: '"
 			         <<tmp.str()<<"', please verify connection details"<<std::endl;
@@ -46,8 +38,7 @@ pqxx::connection* Postgres::OpenConnection(std::string* err){
 			return nullptr;
 		}
 		return conn;
-	}
-	catch (const pqxx::broken_connection &e){
+	} catch (const pqxx::broken_connection &e){
 		// as usual the doxygen sucks, but it seems this doesn't provide
 		// any further methods to obtain information about the failure mode,
 		// so probably not useful to catch this explicitly.
@@ -61,7 +52,48 @@ pqxx::connection* Postgres::OpenConnection(std::string* err){
 	return nullptr;
 }
 
-bool Postgres::CloseConnection(std::string* err){
+bool Postgres::SetConnection(pqxx::connection* conn){
+	if(!CheckConnection(conn)) return false;
+	if(m_conn!=nullptr && CheckConnection(m_conn)){
+		CloseConnection(m_conn);
+	}
+	m_conn = conn;
+	return true;
+}
+
+bool Postgres::CheckConnection(pqxx::connection*& conn, std::string* err){
+	// if no connection given, use the member one.
+	// this means users do not need to hold onto connection separately, but must be single-threaded.
+	if(conn==nullptr && m_conn!=nullptr) conn=m_conn;
+	if(conn==nullptr){
+		std::cerr<<"CheckConnection with no connection!"<<std::endl;
+		if(err) *err = "CheckConnection with no connection!";
+	} else {
+		// otherwise check it
+		try{
+			if(conn->is_open()){
+				if(verbosity>v_debug) std::cout<<"Connection already open"<<std::endl;
+				return true;
+			} else {
+				if(err) *err = "CheckConnection found Connection closed!";
+				std::cerr<<"CheckConnection found Connection closed!"<<std::endl;
+			}
+		} catch (const pqxx::broken_connection &e){
+			// as usual the doxygen sucks, but it seems this doesn't provide
+			// any further methods to obtain information about the failure mode,
+			// so probably not useful to catch this explicitly.
+			std::cerr << e.what() << std::endl;
+			if(err) *err = e.what();
+		}
+		catch (std::exception const &e){
+			std::cerr << e.what() << std::endl;
+			if(err) *err = e.what();
+		}
+	}
+	return false;
+}
+
+bool Postgres::CloseConnection(pqxx::connection* conn, std::string* err){
 	if(verbosity>v_debug){
 		std::cout<<"Closing connection"<<std::endl;
 	}
@@ -94,8 +126,11 @@ bool Postgres::CloseConnection(std::string* err){
 }
 
 Postgres::~Postgres(){
-	CloseConnection();
-	if(conn) delete conn;
+	if(m_conn){
+		CloseConnection(m_conn);
+		delete m_conn;
+		m_conn=nullptr;
+	}
 }
 
 Postgres::Postgres(){}
@@ -117,12 +152,12 @@ void Postgres::Init(std::string hostname_in, std::string hostip_in, int port_in,
 }
 
 // XXX reminder that pqxx::result is a reference-counting wrapper and is not thread-safe! XXX
-bool Postgres::Query(std::string query, int nret, pqxx::result* res, pqxx::row* row, std::string* err){
+bool Postgres::Query(pqxx::connection* conn, std::string query, int nret, pqxx::result* res, pqxx::row* row, std::string* err){
 	
-	// maybe this is redundant since OpenConnection will check is_open (against recommendations)
+	// maybe this is redundant since CheckConnection will check is_open (against recommendations)
 	for(int tries=0; tries<2; ++tries){
 		// ensure we have a connection to work with
-		if(OpenConnection(err)==nullptr){
+		if(!CheckConnection(conn, err)){
 			// no connection to batabase -> abort
 			return false;
 		}
@@ -175,8 +210,9 @@ bool Postgres::Query(std::string query, int nret, pqxx::result* res, pqxx::row* 
 		catch (const pqxx::broken_connection &e){
 			// if our connection is broken after all, disconnect, reconnect and retry
 			if(tries==0){
-				CloseConnection();
-				delete conn; conn=nullptr;
+				CloseConnection(conn);
+				delete conn;
+				conn = OpenConnection();
 				continue;
 			} else {
 				std::cerr<<"Postgres::Query error - broken connection, failed to re-establish it"<<std::endl;
@@ -208,12 +244,12 @@ bool Postgres::Query(std::string query, int nret, pqxx::result* res, pqxx::row* 
 	return false;
 }
 
-bool Postgres::QueryAsStrings(std::string query, std::vector<std::string> *results, char row_or_col, std::string* err){
+bool Postgres::QueryAsStrings(pqxx::connection* conn, std::string query, std::vector<std::string> *results, char row_or_col, std::string* err){
 	// generically run a query, without knowing how many returns are expected.
 	// we'll need to get the results in a generic pqxx::result, and specify the number
 	// of returned rows is >1. If there's fewer, it'll just return an empty container.
 	pqxx::result res;
-	get_ok = Query(query, 2, &res, nullptr, err);
+	get_ok = Query(conn, query, 2, &res, nullptr, err);
 	// if the query failed, the user didn't provide means for a return, or the query had no return,
 	// then we have no need to parse the response and we're done.
 	if(not get_ok || results==nullptr || res.size()==0) return get_ok;
@@ -237,13 +273,13 @@ bool Postgres::QueryAsStrings(std::string query, std::vector<std::string> *resul
 	return true;
 }
 
-bool Postgres::QueryAsJsons(std::string query, std::vector<std::string> *results, std::string* err){
+bool Postgres::QueryAsJsons(pqxx::connection* conn, std::string query, std::vector<std::string> *results, std::string* err){
 	// generically run a query, without knowing how many returns are expected.
 	// we'll need to get the results in a generic pqxx::result, and specify the number
 	// of returned rows is >1. If there's fewer, it'll just return an empty container.
 	//printf("QueryAsJsons running '%s'\n",query.c_str());
 	pqxx::result res;
-	get_ok = Query(query, 2, &res, nullptr, err);
+	get_ok = Query(conn, query, 2, &res, nullptr, err);
 	// if the query failed, the user didn't provide means for a return, or the query had no return,
 	// then we have no need to parse the response and we're done.
 	if(not get_ok || results==nullptr || res.size()==0) return get_ok;
@@ -258,8 +294,7 @@ bool Postgres::QueryAsJsons(std::string query, std::vector<std::string> *results
 			// but to convert this into JSON, strings should be quoted:
 			// i.e. { "field1":3, "field2":"cat", "field3":{"iam":"ajson"} }
 			// this means we need to add enclosing quotes *only* for string fields
-			if((it->type()==18) || (it->type()==25) ||
-                           (it->type()==1042) || (it->type()==1043)){
+			if((it->type()==18) || (it->type()==25) || (it->type()==1042) || (it->type()==1043)){
 				tmpval = "\""+tmpval+"\"";
 			}
 			tmp << "\"" << it->name() << "\":"<< tmpval;
@@ -272,14 +307,14 @@ bool Postgres::QueryAsJsons(std::string query, std::vector<std::string> *results
 	return true;
 }
 
-bool Postgres::Promote(int wait_seconds, std::string* err){
+bool Postgres::Promote(pqxx::connection* conn, int wait_seconds, std::string* err){
 	std::string promote_query = "pg_promote(TRUE,"+std::to_string(wait_seconds)+")";
 	// TRUE says to wait; otherwise we don't know whether the promotion succeeded.
 	// wait is the time we wait for the promotion to succeed before aborting.
-	return Query(promote_query, 0, nullptr, nullptr, err);
+	return Query(conn, promote_query, 0, nullptr, nullptr, err);
 }
 
-bool Postgres::Demote(int wait_seconds, std::string* err){
+bool Postgres::Demote(pqxx::connection* conn, int wait_seconds, std::string* err){
 	/* FIXME implement using repmgr or pgbackrest */
 	// as a minimal start, we can just make the standby.signal file and issue `pg_ctl restart`
 	// however, if there are inconsistencies in this instance and the new master, startup may fail!
@@ -288,7 +323,7 @@ bool Postgres::Demote(int wait_seconds, std::string* err){
 //	// get db name
 //	std::string query_string = "SELECT current_database()";
 //	std::string dbname;
-//	get_ok = ExecuteQuery(query_string, dbname);
+//	get_ok = ExecuteQuery(conn, query_string, dbname);
 //	if(not get_ok){
 //		std::string msg = "Failed to get name of current database in Postgres::Demote!";
 //		std::cerr<<msg<<std::endl;
@@ -299,7 +334,7 @@ bool Postgres::Demote(int wait_seconds, std::string* err){
 	// and db directory
 	std::string query_string = "SELECT setting FROM pg_settings WHERE name='data_directory'";
 	std::string dbdir;
-	get_ok = ExecuteQuery(query_string, dbdir);
+	get_ok = ExecuteQuery(conn, query_string, dbdir);
 	
 	// make the signal file that the db should start up in standby mode
 	std::string flagfilepath = dbdir + "/standby.signal";
@@ -383,7 +418,7 @@ bool Postgres::Demote(int wait_seconds, std::string* err){
 	// since some of these are a little ambiguous we should double check the server status explicitly
 	// let's do a sanity check to see if we can query the database, and if we're now in recovery mode
 	bool in_recovery=false;
-	get_ok = ExecuteQuery("SELECT pg_is_in_recovery()",in_recovery);
+	get_ok = ExecuteQuery(conn, "SELECT pg_is_in_recovery()",in_recovery);
 	if(get_ok && in_recovery){
 		// all looks good!
 		std::cout<<"Database restarted in standby mode"<<std::endl;
@@ -428,9 +463,9 @@ bool Postgres::Demote(int wait_seconds, std::string* err){
 // Quoting functions
 // =================
 // quote field or table names (nominally use double quotes)
-bool Postgres::pqxx_quote_name(const std::string& in, std::string& out, std::string* err){
+bool Postgres::pqxx_quote_name(pqxx::connection* conn, const std::string& in, std::string& out, std::string* err){
 	out = in; // often this will be sufficient
-	if(OpenConnection(err)==nullptr) return false;
+	if(!CheckConnection(conn, err)) return false;
 	try {
 		out = conn->quote_name(in);
 		return true;
@@ -445,12 +480,12 @@ bool Postgres::pqxx_quote_name(const std::string& in, std::string& out, std::str
 
 // quote values (nominally, use single quotes)
 // TODO error signalling here sucks; shouldn't just return empty on failure!
-bool Postgres::pqxx_quote(const std::string& in, std::string& out, std::string* err){
+bool Postgres::pqxx_quote(pqxx::connection* conn, const std::string& in, std::string& out, std::string* err){
 	out = in;
 	//return pqxx::nullconnection{}.quote(string);
 	// annoyingly we can't use a null connection just to get libpqxx to quote things for us;
 	// we must have a valid connection to a real database :/
-	if(OpenConnection(err)==nullptr) return false;
+	if(!CheckConnection(conn, err)) return false;
 	try {
 		out = conn->quote(in);
 		return true;

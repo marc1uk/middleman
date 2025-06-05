@@ -10,6 +10,8 @@
 // for finding clients
 #include "ServiceDiscovery.h"
 #include "MMUtilities.h"
+// for background thread
+#include "Utilities.h"
 // for slow control over zmq SD port
 #include "SlowControlCollection.h"
 // for databse interaction
@@ -34,6 +36,55 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+// for thread safety
+#include <mutex>
+
+class ReceiveSQL;
+
+// POD class for things passed to thread to connect to new client
+struct FindClients_args : public Thread_args {
+	ReceiveSQL* parent;
+	MMUtilities* utilities;
+	// required by the Utilities class to keep track of connections to clients
+	// we should have one map per zmq_socket managed by the Utilities class;
+	// it uses this to determine if we are connected to a given client already
+	std::map<std::string,Store*> clt_rtr_connections;
+	std::map<std::string,Store*> mm_rcv_connections;
+	std::map<std::string,Store*> clt_sub_connections;
+};
+
+// POD class for things passed to multicast worker threads
+struct MulticastWorker_args : public Thread_args {
+	ReceiveSQL* parent;
+	bool running;
+	bool finished;
+	// thread must maintain its own connection to database
+	pqxx::connection* conn;
+	std::mutex busy;
+	BStore tmp;
+	JSONP jsonp;
+	std::string database;
+	std::string query;
+	std::string topic;
+	int get_ok;
+	std::vector<std::string> logmsgs;
+	std::vector<std::string> monmsgs;
+	boost::posix_time::ptime last_log_insert;
+	boost::posix_time::ptime last_mon_insert;
+};
+
+// POD class for things passed to multicast listener thread
+struct MulticastReceive_args : public Thread_args {
+	ReceiveSQL* parent;
+	bool running;
+	bool finished;
+	socklen_t multicast_addrlen;
+	struct sockaddr_in* multicast_addr;
+	int multicast_socket;
+	zmq::pollitem_t poll;
+	char message[655355]; // theoretical maximum UDP buffer size
+	int get_ok;
+};
 
 class ReceiveSQL{
 	public:
@@ -50,29 +101,38 @@ class ReceiveSQL{
 	
 	bool Execute();
 	bool FindNewClients();
-	bool FindNewClients_v2();
+	static void FindNewClients_v2(Thread_args* args);
 	bool GetClientWriteQueries();
 	bool WriteMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out);
 	bool GetClientReadQueries();
 	bool ReadMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out);
-	bool GetMulticastMessages();
-	bool MulticastMessageToQuery(const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out);
+	//bool GetMulticastMessages();
+	static void GetMulticastMessages(Thread_args* args); // run multicast queries
+	bool MulticastMessageToQuery(pqxx::connection* conn, const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out, BStore& tmp, JSONP& jsonp, int& ok);
 	bool GetMiddlemanCheckin();
 	bool CheckMasterStatus();
 	bool RunNextWriteQuery();
 	bool RunNextReadQuery();
-	bool RunNextMulticastMsg();
+	//bool RunNextMulticastMsg();
+	static void MulticastWorker(Thread_args* args); // receive multicast messages
+	std::vector<MulticastWorker_args*> multicast_worker_args;
+	MulticastReceive_args* multicast_listener_args=nullptr;
+	FindClients_args* findclients_args=nullptr;
+	size_t batch_size = 100; // minimum number of multicast messages to buffer before insert (or >30s)
 	bool SendNextReply();
 	bool SendNextMulticast();
 	std::string escape_json(std::string s);
+	void TrimWS(std::string&);
 	bool BroadcastPresence();
 	bool CleanupCache();
 	bool TrimQueue(const std::string& queuename);
 	bool TrimDequeue(const std::string& queuename);
+	bool TrimVector(const std::string& queuename);
 	bool TrimCache();
 	bool UpdateControls();
 	bool DoStop(bool stop);
 	bool DoQuit(bool quit);
+	bool ClearConnections(bool clearconnections);
 	bool TrackStats();
 	
 	bool Finalise();
@@ -83,8 +143,8 @@ class ReceiveSQL{
 	bool UpdateRole();
 	boost::posix_time::ptime ToTimestamp(const std::string& timestring);
 	std::string ToTimestring(boost::posix_time::ptime);
-	bool TimeStringFromUnixMs(uint64_t timestamp, std::string& timestring);
-	bool TimeStringFromUnixSec(uint64_t timestamp, std::string& timestring);
+	bool TimeStringFromUnixMs(const uint64_t& timestamp, std::string& timestring);
+	bool TimeStringFromUnixSec(const uint64_t& timestamp, std::string& timestring);
 	bool GetLastUpdateTime(std::string& our_timestamp);
 	
 	// Logging functions
@@ -116,6 +176,10 @@ class ReceiveSQL{
 	zmq::socket_t* clt_rtr_socket=nullptr;  // receives read queries from client dealers
 	zmq::socket_t* clt_sub_socket=nullptr;  // receives write queries from client publishers
 	zmq::socket_t* mm_rcv_socket=nullptr;   // receives connections from other middlemen
+	// mutexes for locking them while background service discovery thread makes new connections
+	std::mutex clt_rtr_mtx;
+	std::mutex clt_sub_mtx;
+	std::mutex mm_rcv_mtx;
 	
 	// these sockets will bind, they advertise our services
 	zmq::socket_t* mm_snd_socket=nullptr;   // we will advertise our presence as a middleman to other middlemen
@@ -124,20 +188,15 @@ class ReceiveSQL{
 	// and connect us to those sockets
 	ServiceDiscovery* service_discovery = nullptr;
 	MMUtilities* utilities = nullptr;
-	// required by the Utilities class to keep track of connections to clients
-	// we should have one map per zmq_socket managed by the Utilities class;
-	// it uses this to determine if we are connected to a given client already
-	std::map<std::string,Store*> clt_rtr_connections;
-	std::map<std::string,Store*> mm_rcv_connections;
-	std::map<std::string,Store*> clt_sub_connections;
+	
+	// for background thread creation
+	Utilities m_util;
 	
 	// multicast socket file descriptor
 	int multicast_socket=-1;
 	// multicast destination address structure
 	struct sockaddr_in multicast_addr;
 	socklen_t multicast_addrlen;
-	// apparently works with zmq poller?
-	zmq::pollitem_t multicast_poller;
 	
 	// poll timeouts
 	int inpoll_timeout;
@@ -190,7 +249,9 @@ class ReceiveSQL{
 	std::map<std::pair<std::string, uint32_t>, Query> wrt_txn_queue;
 	std::map<std::pair<std::string, uint32_t>, Query> rd_txn_queue;
 	std::map<std::pair<std::string, uint32_t>, Query> resp_queue;
-	std::deque<std::string> in_multicast_queue;
+	std::vector<std::string> in_multicast_queue;
+	std::mutex in_multicast_queue_mtx;
+	int multicasts_waiting; // how many multicasts the thread has yet to write to DB
 	std::deque<std::string> out_multicast_queue;
 	// we'll cache a set of recent responses send to each client,
 	// then if a client that misses their acknowledgement and resends the query,

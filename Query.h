@@ -6,7 +6,7 @@
 #include <string>
 
 struct Query{
-	Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, const std::string& database_in, const std::string& query_in, uint32_t query_ok_in=0, std::string response_in="NULL");
+	Query(zmq::message_t& client_id_in, zmq::message_t& msg_id_in, const std::string& database_in, const std::string& topic_in, const std::string& query_in, uint32_t query_ok_in=0, std::string response_in="NULL");
 	Query(const Query& in);
 	void Print();
 	
@@ -14,6 +14,7 @@ struct Query{
 	zmq::message_t message_id;
 	std::string database;
 	std::string query;
+	std::string topic;
 	uint32_t query_ok;
 	std::vector<std::string> response;
 	int retries;
