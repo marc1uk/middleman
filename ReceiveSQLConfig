@@ -14,10 +14,10 @@ dbname daq
 clt_sub_port 55556
 clt_rtr_port 55555
 mm_snd_port 55597
-log_pub_port 55554
-remote_control_port 24011
-multicast_port 55554
+log_port 55554
+mon_port 55553
 multicast_address 239.192.1.1
+remote_control_port 24011
 
 # all timeouts in ms
 clt_sub_socket_timeout 500
@@ -48,6 +48,6 @@ cache_period_ms 10000
 # if writes are sent to the read-only port, but we're master, should we accept them?
 handle_unexpected_writes 0
 stats_period_ms 60000
-stdio_verbosity 6
+stdio_verbosity 1
 db_verbosity 1
 service_discovery_config ServiceDiscoveryConfig
