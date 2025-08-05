@@ -72,6 +72,7 @@ class ReceiveSQL{
 	bool DoStop(bool stop);
 	bool DoQuit(bool quit);
 	bool TrackStats();
+	bool ResetStats(bool reset);
 	
 	bool Finalise();
 	
@@ -130,12 +131,15 @@ class ReceiveSQL{
 	std::map<std::string,Store*> clt_sub_connections;
 	
 	// multicast socket file descriptor
-	int multicast_socket=-1;
+	int log_socket=-1;
+	int mon_socket=-1;
 	// multicast destination address structure
-	struct sockaddr_in multicast_addr;
+	struct sockaddr_in log_addr;
+	struct sockaddr_in mon_addr;
 	socklen_t multicast_addrlen;
 	// apparently works with zmq poller?
 	zmq::pollitem_t multicast_poller;
+	char buf[655355]; // buffer for multicast messages
 	
 	// poll timeouts
 	int inpoll_timeout;
@@ -227,8 +231,10 @@ class ReceiveSQL{
 	unsigned long write_query_recv_fails = 0;
 	unsigned long read_queries_recvd = 0;
 	unsigned long read_query_recv_fails = 0;
-	unsigned long multicasts_recvd = 0;
-	unsigned long multicast_recv_fails = 0;
+	unsigned long logs_recvd = 0;
+	unsigned long mons_recvd = 0;
+	unsigned long log_recv_fails = 0;
+	unsigned long mon_recv_fails = 0;
 	unsigned long mm_broadcasts_recvd = 0;
 	unsigned long mm_broadcast_recv_fails = 0;
 	
