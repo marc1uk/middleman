@@ -3,6 +3,7 @@
 #systemctl start postgresql-12
 
 # export path to zmq, pqxx, boost, ToolFrameworkCore and ToolDAQFramework
+cd /opt/middleman
 . Setup.sh
 
 # setup database environmental variables
@@ -45,7 +46,6 @@ if [ -f ${STOPFILE} ]; then
 fi
 
 # run the middleman
-cd /opt/middleman
 while [ true ]; do
 	echo -n "starting middleman at " >> middleman_runs.log
 	date >> middleman_runs.log
