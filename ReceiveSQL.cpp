@@ -8,6 +8,9 @@
 #include <thread>
 #include <chrono>
 
+#include "Tracy.hpp"
+const char* mm_execute_frame="middleman";
+
 // TODO: invoking pg_promote requires either superuser privileges, or explicit granting
 // of EXECUTE on the function pg_promote. We should grant this to the middleman,
 // which otherwise runs as the toolanalysis user....
@@ -61,6 +64,8 @@ bool ReceiveSQL::InitJobManager(){
 }
 
 bool ReceiveSQL::Execute(){
+	ZoneScoped;
+	FrameMarkStart(mm_execute_frame);
 	Log("ReceiveSQL Executing...",21);
 	auto loop_start = std::chrono::high_resolution_clock::now();
 	
@@ -202,10 +207,13 @@ bool ReceiveSQL::Execute(){
 	if(loop_ms>max_loop_ms) max_loop_ms=loop_ms;
 	++loops;
 	
+	FrameMarkEnd(mm_execute_frame);
+	
 	return true;
 }
 
 bool ReceiveSQL::Finalise(){
+	ZoneScoped;
 	
 	Log("Closing middleman",3);
 	
@@ -257,6 +265,7 @@ bool ReceiveSQL::Finalise(){
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
 bool ReceiveSQL::InitPostgres(Store& m_variables, const std::string& dbname){
+	ZoneScoped;
 	
 	// ##########################################################################
 	// default initialize variables
@@ -308,6 +317,7 @@ bool ReceiveSQL::InitPostgres(Store& m_variables, const std::string& dbname){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::InitMulticast(Store& m_variables){
+	ZoneScoped;
 	
 	/*              Multicast Setup              */
 	/* ----------------------------------------- */
@@ -418,6 +428,7 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::InitZMQ(Store& m_variables){
+	ZoneScoped;
 	
 	// ##########################################################################
 	// # default initialize variables
@@ -655,6 +666,7 @@ bool ReceiveSQL::InitServiceDiscovery(Store& m_variables){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::InitControls(Store& m_variables){
+	ZoneScoped;
 	
 	m_variables.Get("stopfile",stopfile);
 	m_variables.Get("quitfile",quitfile);
@@ -701,6 +713,7 @@ bool ReceiveSQL::InitControls(Store& m_variables){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::InitMessaging(Store& m_variables){
+	ZoneScoped;
 	
 	// ##########################################################################
 	// # default initialize variables
@@ -781,6 +794,7 @@ bool ReceiveSQL::InitMessaging(Store& m_variables){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::FindNewClients(){
+	ZoneScoped;
 	
 	int new_connections=0;
 	int old_connections=0;
@@ -822,6 +836,7 @@ bool ReceiveSQL::FindNewClients(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::FindNewClients_v2(){
+	ZoneScoped;
 	
 	int clt_rtr_conns = clt_rtr_connections.size();
 	int clt_sub_conns = clt_sub_connections.size();
@@ -883,6 +898,7 @@ bool ReceiveSQL::FindNewClients_v2(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::GetClientWriteQueries(){
+	ZoneScoped;
 	
 	// see if we had any write requests from clients
 	if(in_polls.at(4).revents & ZMQ_POLLIN){
@@ -1019,6 +1035,8 @@ std::cout<<"no write queries at input port"<<std::endl;
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteDeviceConfigToQuery(const std::string& message, BStore& config, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
+	
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1072,6 +1090,8 @@ bool ReceiveSQL::WriteDeviceConfigToQuery(const std::string& message, BStore& co
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteRunConfigToQuery(const std::string& message, BStore& config, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
+	
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1125,6 +1145,8 @@ bool ReceiveSQL::WriteRunConfigToQuery(const std::string& message, BStore& confi
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteCalibrationToQuery(const std::string& message, BStore& calibration, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
+	
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1175,6 +1197,8 @@ bool ReceiveSQL::WriteCalibrationToQuery(const std::string& message, BStore& cal
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteAlarmToQuery(const std::string& message, BStore& alarm, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
+	
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1223,6 +1247,8 @@ bool ReceiveSQL::WriteAlarmToQuery(const std::string& message, BStore& alarm, st
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
+	
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1274,6 +1300,8 @@ bool ReceiveSQL::WriteRootPlotToQuery(const std::string& message, BStore& plot, 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WritePlotlyPlotToQuery(const std::string& message, BStore& plot, std::string& db_out, std::string& sql_out) {
+	ZoneScoped;
+	
 	db_out = "daq"; // FIXME db
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1325,6 +1353,8 @@ bool ReceiveSQL::WritePlotlyPlotToQuery(const std::string& message, BStore& plot
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
+	
 	Log(Concat("Forming SQL for write query with topic: '",topic,"', message: '",message,"'"),4);
 
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
@@ -1362,6 +1392,7 @@ bool ReceiveSQL::WriteMessageToQuery(const std::string& topic, const std::string
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::GetClientReadQueries(){
+	ZoneScoped;
 	
 	// check if we had any read transactions dealt to us
 	if(in_polls.at(2).revents & ZMQ_POLLIN){
@@ -1453,6 +1484,7 @@ std::cout<<"no read queries at input port"<<std::endl;
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadQueryToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	// this one's easy, the user has already given us a database and SQL statement
 	get_ok  = request.Get("database", db_out);
 	get_ok &= request.Get("query",sql_out);
@@ -1466,6 +1498,7 @@ bool ReceiveSQL::ReadQueryToQuery(const std::string& message, BStore& request, s
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1507,6 +1540,7 @@ bool ReceiveSQL::ReadDeviceConfigToQuery(const std::string& message, BStore& req
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1570,6 +1604,7 @@ bool ReceiveSQL::ReadRunConfigToQuery(const std::string& message, BStore& reques
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1612,6 +1647,7 @@ bool ReceiveSQL::ReadCalibrationToQuery(const std::string& message, BStore& requ
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 	
@@ -1650,6 +1686,7 @@ bool ReceiveSQL::ReadRootPlotToQuery(const std::string& message, BStore& request
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadPlotlyPlotToQuery(const std::string& message, BStore& request, std::string& db_out, std::string& sql_out) {
+	ZoneScoped;
 	db_out = "daq";
 	Postgres& a_database = m_databases.at(db_out);
 
@@ -1685,6 +1722,7 @@ bool ReceiveSQL::ReadPlotlyPlotToQuery(const std::string& message, BStore& reque
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string& message, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	Log(Concat("Forming SQL for read query with topic: '",topic,"', message: '",message,"'"),4);
 	
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
@@ -1719,6 +1757,7 @@ bool ReceiveSQL::ReadMessageToQuery(const std::string& topic, const std::string&
 
 
 bool ReceiveSQL::GetMulticastMessages(){
+	ZoneScoped;
 	
 	// check for incoming message
 	
@@ -1761,10 +1800,42 @@ bool ReceiveSQL::GetMulticastMessages(){
 	return true;
 }
 
+void ReceiveSQL::MulticastMessageJob(void* data){
+	
+	// could be Query object
+	MulticastJobStruct* job_data = reinterpret_cast<MulticastJobStruct*>(data);
+	
+	std::string database;
+	std::string query;
+	bool get_ok = MulticastMessageToQuery(buf, topic, database, query);
+	
+	if(!get_ok){
+		(i==0) ? ++log_recv_fails : ++mon_recv_fails;
+		return false;
+	}
+	
+	// encapsulate 
+	// FIXME for now all messages go to daq database,
+	// probably need to make this a pair at least with first element a DB connection or name
+	if(topic=="logging" || topic=="monitoring" || topic=="rootplot"){
+		in_multicast_queue.emplace_back(query);
+		Log("Put "+topic+" msg in queue: '"+query+"'",12);
+		
+	} else {
+		// could not determine multicast type
+		Log(std::string{"Unrecognised topic '"}+topic+"' in multicast message '"+buf+"'",v_error);
+		(i==0) ? ++log_recv_fails : ++mon_recv_fails;
+		return false;
+		
+	}
+	
+}
+
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 // FIXME refactor to make code DRY
 bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string& topic_out, std::string& db_out, std::string& sql_out){
+	ZoneScoped;
 	Log(Concat("Forming SQL for logging message: '",message,"'"),12);
 	
 	// write queries received on the pub port are JSON messages that we need to convert to SQL.
@@ -1940,6 +2011,7 @@ bool ReceiveSQL::MulticastMessageToQuery(const std::string& message, std::string
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::GetMiddlemanCheckin(){
+	ZoneScoped;
 	
 	// see if we had a presence broadcast from the other middleman
 	// as well as checking the master is still up, we also check whether both middlemen
@@ -2084,6 +2156,7 @@ bool ReceiveSQL::GetMiddlemanCheckin(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::CheckMasterStatus(){
+	ZoneScoped;
 	
 	// check how long it's been since we last heard from the other middleman
 	elapsed_time = promote_timeout - (boost::posix_time::microsec_clock::universal_time() - last_mm_receipt);
@@ -2116,6 +2189,7 @@ bool ReceiveSQL::CheckMasterStatus(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::RunNextWriteQuery(){
+	ZoneScoped;
 	
 	// run our next postgres query, if we have one
 	if(wrt_txn_queue.size()){
@@ -2147,6 +2221,7 @@ bool ReceiveSQL::RunNextWriteQuery(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::RunNextReadQuery(){
+	ZoneScoped;
 	
 	// run our next postgres query, if we have one
 	if(rd_txn_queue.size()){
@@ -2178,6 +2253,7 @@ bool ReceiveSQL::RunNextReadQuery(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::RunNextMulticastMsg(){
+	ZoneScoped;
 	
 	// insert our next fire-and-forget message, if we have one
 	if(in_multicast_queue.size()){
@@ -2207,6 +2283,7 @@ bool ReceiveSQL::RunNextMulticastMsg(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::SendNextReply(){
+	ZoneScoped;
 	
 	Log("Size of reply queue is "+std::to_string(resp_queue.size()),10);
 	
@@ -2291,6 +2368,7 @@ else {
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::SendNextMulticast(){
+	ZoneScoped;
 	
 	// send next logging message to the master, if we have one in the queue
 	if(out_multicast_queue.size()){
@@ -2321,6 +2399,7 @@ bool ReceiveSQL::SendNextMulticast(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::BroadcastPresence(){
+	ZoneScoped;
 	
 	// check if we need to broadcast our presence to the other middleman
 	elapsed_time = broadcast_period - (boost::posix_time::microsec_clock::universal_time() - last_mm_send);
@@ -2352,6 +2431,7 @@ bool ReceiveSQL::BroadcastPresence(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::CleanupCache(){
+	ZoneScoped;
 	
 	// cleanup any old messages from the cache
 	// to remove elements from a std::map while iterating through it, we can't use a range-based loop
@@ -2376,6 +2456,7 @@ bool ReceiveSQL::CleanupCache(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::TrimQueue(const std::string& queuename){
+	ZoneScoped;
 	
 	// check acknowledge queue size and do the same
 	std::map<std::pair<std::string, uint32_t>, Query>* queue;
@@ -2418,6 +2499,7 @@ bool ReceiveSQL::TrimQueue(const std::string& queuename){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::TrimDequeue(const std::string& queuename){
+	ZoneScoped;
 	
 	// check in or out log message queue size and do the same
 	std::deque<std::string>* queue;
@@ -2456,6 +2538,7 @@ bool ReceiveSQL::TrimDequeue(const std::string& queuename){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::TrimCache(){
+	ZoneScoped;
 	
 	// check cache size and do the same
 	if(cache.size() > drop_limit){
@@ -2491,6 +2574,7 @@ bool ReceiveSQL::TrimCache(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::UpdateControls(){
+	ZoneScoped;
 	// we need to check all the registered controls for updates
 	// (this is expected to change when we can register callbacks, so we'll implement with that in mind)
 	bool stop=false;
@@ -2511,6 +2595,7 @@ bool ReceiveSQL::UpdateControls(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::TrackStats(){
+	ZoneScoped;
 	
 	// get values from last stats dump so we can see how much we've accumulated since then
 	elapsed_time = stats_period - (boost::posix_time::microsec_clock::universal_time() - last_stats_calc);
@@ -2634,6 +2719,7 @@ bool ReceiveSQL::TrackStats(){
 //                   ≫ ──── ≪•◦ ❈ ◦•≫ ──── ≪
 
 bool ReceiveSQL::NegotiateMaster(const std::string& their_header, const std::string& their_timestamp){
+	ZoneScoped;
 	
 	// we need to establish who's the master.
 	// The master will be decided based on who has the most recently modified datbase.
@@ -2658,6 +2744,7 @@ bool ReceiveSQL::NegotiateMaster(const std::string& their_header, const std::str
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::NegotiationRequest(){
+	ZoneScoped;
 	
 	std::string our_header="Negotiate";
 	std::string msg_type; // header of received response
@@ -2838,6 +2925,7 @@ bool ReceiveSQL::NegotiationRequest(){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::NegotiationReply(const std::string& their_header, const std::string& their_timestamp){
+	ZoneScoped;
 	
 	// other side of negotiations. This is simpler since we already have the other middleman's
 	// timestamp, so all we need to do is deduce our new role and send the response.
@@ -2895,6 +2983,7 @@ bool ReceiveSQL::NegotiationReply(const std::string& their_header, const std::st
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::UpdateRole(){
+	ZoneScoped;
 	
 	if(am_master){
 		++promotions;
@@ -3016,7 +3105,7 @@ boost::posix_time::ptime ReceiveSQL::ToTimestamp(const std::string& timestring){
 
 // to insert boost timestamps we need to turn them into Postgres strings
 std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
-
+	
   //printf("b1\n");
 	
 	// convert boost timestamp to time struct
@@ -3050,6 +3139,7 @@ std::string ReceiveSQL::ToTimestring(boost::posix_time::ptime timestamp){
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool ReceiveSQL::GetLastUpdateTime(std::string& our_timestamp){
+	ZoneScoped;
 	
 	// To get the timestamp of the last committed transaction we can use pg_last_committed_xact().
 	// n.b. this requires 'track_commit_timestamp' is enabled in postgresql.conf
@@ -3116,6 +3206,7 @@ bool ReceiveSQL::TimeStringFromUnixMs(uint64_t timestamp, std::string& timestrin
 }
 
 std::string ReceiveSQL::escape_json(std::string s){
+	ZoneScoped;
 	// https://stackoverflow.com/a/27516892
 	
 	// i think the only thing we really need to worry about escaping here are double quotes,

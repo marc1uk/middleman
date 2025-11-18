@@ -4,8 +4,12 @@
 #include <thread>
 #include <chrono>
 
+//#include "Tracy.hpp"
+//const char* main_execute_frame="middlemain";
+
 int main(int argc, const char* argv[]){
 	
+	//ZoneScoped;
 	if(argc==1){
 		std::cout<<"Usage: "<<argv[0]<<" <configfile>"<<std::endl;
 		return 0;

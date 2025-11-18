@@ -16,6 +16,9 @@ ToolFrameworkInclude= -I $(Dependencies)/ToolFrameworkCore/include
 ToolDAQFrameworkLib=  -L $(Dependencies)/ToolDAQFramework/lib -lDAQStore -lDAQDataModelBase -lServiceDiscovery
 ToolDAQFrameworkInclude= -I $(Dependencies)/ToolDAQFramework/include
 
+TracyLib= -L $(Dependencies)/Tracy/MM_client -lTracyClient
+TracyInclude= -I $(Dependencies)/Tracy/MM_client/include
+
 #CXXFLAGS= -g -O0 -fno-omit-frame-pointer -fdiagnostics-color=always -Wno-attributes
 CXXFLAGS= -fdiagnostics-color=always -Wno-attributes -O3 -march=native -DTRACY_ENABLE
 
@@ -24,13 +27,13 @@ all: middleman
 .phony: clean
 
 middleman: main.cpp $(filter-out main.o, $(patsubst %.cpp, %.o, $(wildcard *.cpp)))
-	g++ $(CXXFLAGS) $^ -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) -lpthread
+	g++ $(CXXFLAGS) $^ -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) $(TracyInclude) $(TracyLib) -lpthread
 
 testparse: testparse.cxx $(filter-out main.o, $(patsubst %.cpp, %.o, $(wildcard *.cpp)))
 	g++ $(CXXFLAGS) $^ -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) -lpthread
 
 %.o: %.cpp %.h
-	g++ $(CXXFLAGS) -c -fPIC $< -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) -lpthread
+	g++ $(CXXFLAGS) -c -fPIC $< -o $@ -I./ $(PostgresInclude) $(BoostInclude) $(PostgresLib) $(ZMQInclude) $(BoostLib) $(ZMQLib) $(ToolFrameworkLib) $(ToolFrameworkInclude) $(ToolDAQFrameworkLib) $(ToolDAQFrameworkInclude) $(TracyInclude) $(TracyLib) -lpthread
 
 clean:
 	@rm -f main *.o

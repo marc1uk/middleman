@@ -6,12 +6,15 @@
 #include <sys/wait.h> // waitpid
 #include <fstream>
 
+#include "Tracy.hpp"
+
 void Postgres::SetVerbosity(int verb){
 	verbosity=verb;
 }
 
 // TODO probably could do better with the exception handling throughout this file
 pqxx::connection* Postgres::OpenConnection(std::string* err){
+	ZoneScoped;
 	if(verbosity>v_debug) std::cout<<"Opening Connection"<<std::endl;
 	try{
 		// if we already have a connection open, nothing to do
@@ -62,6 +65,7 @@ pqxx::connection* Postgres::OpenConnection(std::string* err){
 }
 
 bool Postgres::CloseConnection(std::string* err){
+	ZoneScoped;
 	if(verbosity>v_debug){
 		std::cout<<"Closing connection"<<std::endl;
 	}
@@ -118,6 +122,8 @@ void Postgres::Init(std::string hostname_in, std::string hostip_in, int port_in,
 
 // XXX reminder that pqxx::result is a reference-counting wrapper and is not thread-safe! XXX
 bool Postgres::Query(std::string query, int nret, pqxx::result* res, pqxx::row* row, std::string* err){
+	ZoneScoped;
+	ZoneText(query.c_str(),query.length());
 	// maybe this is redundant since OpenConnection will check is_open (against recommendations)
 	for(int tries=0; tries<2; ++tries){
 		// ensure we have a connection to work with
@@ -237,6 +243,7 @@ bool Postgres::QueryAsStrings(std::string query, std::vector<std::string> *resul
 }
 
 bool Postgres::QueryAsJsons(std::string query, std::vector<std::string> *results, std::string* err){
+	ZoneScoped;
 	// generically run a query, without knowing how many returns are expected.
 	// we'll need to get the results in a generic pqxx::result, and specify the number
 	// of returned rows is >1. If there's fewer, it'll just return an empty container.
@@ -428,6 +435,7 @@ bool Postgres::Demote(int wait_seconds, std::string* err){
 // =================
 // quote field or table names (nominally use double quotes)
 bool Postgres::pqxx_quote_name(const std::string& in, std::string& out, std::string* err){
+	ZoneScoped;
 	out = in; // often this will be sufficient
 	if(OpenConnection(err)==nullptr) return false;
 	try {
@@ -445,6 +453,7 @@ bool Postgres::pqxx_quote_name(const std::string& in, std::string& out, std::str
 // quote values (nominally, use single quotes)
 // TODO error signalling here sucks; shouldn't just return empty on failure!
 bool Postgres::pqxx_quote(const std::string& in, std::string& out, std::string* err){
+	ZoneScoped;
 	out = in;
 	//return pqxx::nullconnection{}.quote(string);
 	// annoyingly we can't use a null connection just to get libpqxx to quote things for us;
