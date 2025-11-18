@@ -33,6 +33,9 @@
 #include <netinet/in.h>
 #include <fcntl.h>
 
+#include "WorkerPoolManager.h"
+#include "Pool.h"
+
 class ReceiveSQL{
 	public:
 	ReceiveSQL(){};
@@ -93,7 +96,20 @@ class ReceiveSQL{
 	int PollAndReceive(zmq::socket_t* sock, zmq::pollitem_t poll, int timeout, std::vector<zmq::message_t>& outputs);
 	bool Receive(zmq::socket_t* sock, std::vector<zmq::message_t>& outputs);
 	
+	// functions passed to worker jobs managed by job queue
+	static void MulticastMessageJob(void* data);
+	
 	private:
+	Pool<Job> job_pool(true, 1000, 100);
+	JobQueue job_queue;
+	int max_threads=10;
+	WorkerPoolManager* job_manager=nullptr;
+	
+	// FIXME either change name to be more specific to multicast
+	// or maybe make this job struct generic if possible (in which case only change job function)
+	Pool<MulticastJobStruct> job_struct_pool(true, 1000, 100); // TODO base pool size on available RAM and struct size
+	
+	
 	// an instance of the postgres interface class to communicate with the database(s)
 	std::map<std::string,Postgres> m_databases;
 	

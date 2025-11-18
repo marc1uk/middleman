@@ -55,6 +55,11 @@ bool ReceiveSQL::Initialise(const std::string& configfile){
 	return true;
 }
 
+bool ReceiveSQL::InitJobManager(){
+	// FIXME may want to add a job out dequeue so we can resubmit jobs that fail?
+	job_manager = new WorkerPoolManager(job_queue, &max_threads, 0, 0, 0, true, true);
+}
+
 bool ReceiveSQL::Execute(){
 	Log("ReceiveSQL Executing...",21);
 	auto loop_start = std::chrono::high_resolution_clock::now();
@@ -1390,7 +1395,7 @@ bool ReceiveSQL::GetClientReadQueries(){
 		// 3. JSON message
 		// again the two IDs form a key used to track messages already handled.
 		
-		//* although for now we're using a dealer socket, a topic part is included
+		// although for now we're using a dealer socket, a topic part is included
 		// to distinguish what kind of message this is
 		
 		std::string topic="-"; std::string client_str="-"; uint32_t msg_int=-1; std::string msg_string="-";
@@ -1740,29 +1745,15 @@ bool ReceiveSQL::GetMulticastMessages(){
 			Log("Received multicast message from "+std::string{inet_ntoa(multicast_addr->sin_addr)}
 			   +": '"+std::string{buf}+"'",12);
 			
-			std::string database;
-			std::string query;
+			MulticastJobStruct* job_data = job_struct_pool.GetNew(job_struct_pool, buf, out_vector, database, ...);
+			
 			std::string topic= (i==0) ? "logging" : "monitoring";
-			get_ok = MulticastMessageToQuery(buf, topic, database, query);
-			
-			if(!get_ok){
-				(i==0) ? ++log_recv_fails : ++mon_recv_fails;
-				return false;
-			}
-			
-			// FIXME for now all messages go to daq database,
-			// probably need to make this a pair at least with first element a DB connection or name
-			if(topic=="logging" || topic=="monitoring" || topic=="rootplot"){
-				in_multicast_queue.emplace_back(query);
-				Log("Put "+topic+" msg in queue: '"+query+"'",12);
-				
-			} else {
-				// could not determine multicast type
-				Log(std::string{"Unrecognised topic '"}+topic+"' in multicast message '"+buf+"'",v_error);
-				(i==0) ? ++log_recv_fails : ++mon_recv_fails;
-				return false;
-				
-			}
+			Job* the_job = job_pool.GetNew(topic);
+			the_job->out_pool = &job_pool;
+			the_job->func = MulticastMessageJob;
+			the_job->fail_func = MulticastMessageFail;
+			the_job->data = job_data;
+			/*ok =*/ job_queue.AddJob(the_job); // just checks if you've defined func and job
 			
 		} /*else { std::cout<<"no multicast messages"<<std::endl; }*/
 	}

@@ -17,7 +17,7 @@ ToolDAQFrameworkLib=  -L $(Dependencies)/ToolDAQFramework/lib -lDAQStore -lDAQDa
 ToolDAQFrameworkInclude= -I $(Dependencies)/ToolDAQFramework/include
 
 #CXXFLAGS= -g -O0 -fno-omit-frame-pointer -fdiagnostics-color=always -Wno-attributes
-CXXFLAGS= -fdiagnostics-color=always -Wno-attributes -O3
+CXXFLAGS= -fdiagnostics-color=always -Wno-attributes -O3 -march=native -DTRACY_ENABLE
 
 all: middleman
 
