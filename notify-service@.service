@@ -1,0 +1,11 @@
+[Unit]
+Description=Send Notification of systemd unit Failure
+
+[Service]
+Type=oneshot
+#ExecStart=echo 'Notification triggered for service %i'
+ExecStart=/opt/middleman/slackNotify.sh -s %i
+
+[Install]
+WantedBy=default.target
+EOF

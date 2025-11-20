@@ -8,15 +8,16 @@ MMUtilities::MMUtilities(zmq::context_t* zmqcontext) : DAQUtilities(zmqcontext){
 
 const std::set<int> connect_errs{EINVAL,EPROTONOSUPPORT,ENOCOMPATPROTO,ETERM,ENOTSOCK,EMTHREAD};
 
-int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, int read_port_num, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, int write_port_num, zmq::socket_t* mm_sock, std::map<std::string, Store*> &mm_conns, int mm_port_num){
+int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::string,Store*> &readrep_conns, int read_port_num, std::mutex& readrep_mtx, zmq::socket_t* write_sock, std::map<std::string,Store*> &write_conns, int write_port_num, std::mutex& write_mtx, zmq::socket_t* mm_sock, std::map<std::string, Store*> &mm_conns, int mm_port_num, std::mutex& mm_mtx){
     // it's like UpdateConnections, but rather than connecting to specifically named endpoints,
     // we find all services that aren't middlemen and assume they have associated postgres client endpoints
     // for middlemen, we likewise find their Control service and assume they have a inter-middlemen comms point
     // since we connect to hidden endpoints, we need to already know their port numbers
+    if(readrep_sock==nullptr || write_sock==nullptr || mm_sock==nullptr){
+        std::cerr<<"ConnectToEndpoints with null sockets: "<<readrep_sock<<", "<<write_sock<<", "<<mm_sock<<std::endl;
+        return 0;
+    }
     
-    boost::uuids::uuid m_UUID=boost::uuids::random_generator()();
-    long msg_id=0;
-
     zmq::socket_t Ireceive (*m_context, ZMQ_DEALER);
     Ireceive.connect("inproc://ServiceDiscovery");
 
@@ -39,6 +40,8 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
     iss>>size;
     
     int num_new_connections=0;
+    
+    std::set<std::string> active_endpoints;
 
     for(int i=0;i<size;i++){
       
@@ -51,15 +54,15 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
       service->JsonParser(ss.str());
       
       std::string type;
-      std::string uuid;
       std::string ip;
       std::string store_port="";
       service->Get("msg_value",type);
-      service->Get("uuid",uuid);
       service->Get("ip",ip);
       service->Get("remote_port",store_port);
       std::string tmp;
       bool registered=false;
+      
+      active_endpoints.emplace(ip);
       
       if(type.substr(0,9)!="middleman"){
         // if this isn't a middleman, assume it's a service with a PGClient
@@ -75,22 +78,15 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
           readrep_conns[ip]=service;
           tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
-          // annoyingly libzmq doesn't expose the return value of zmq::socket_t::connect
-          // so we can't clearly check whether a socket connect succeeded or failed. >:(
-          // if it fails it should set errno to say why. Now it is poor practice to use
-          // errno unless you know it should be checked, because its value may be set by
-          // intervening calls that do not indicate an actual error. But its the best we have.
-          // at the least we should check the currently set value represents one that
-          // will be set by zmq::socket_t::connect in the event of an error
-          errno=0;
-          readrep_sock->connect(tmp.c_str());
-          if(errno!=0 && connect_errs.count(errno)){
-            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to read socket "
-                     <<tmp<<": "<<zmq_strerror(errno)<<std::endl;
-          } else {
+          try {
+            readrep_mtx.lock();
+            readrep_sock->connect(tmp.c_str());
+            readrep_mtx.unlock();
             std::cout<<"MMUtilities::ConnectToEndpoints new connection to read socket "<<tmp<<std::endl;
+            ++num_new_connections;
+          } catch(zmq::error_t& err){
+            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to read socket "<<tmp<<": "<<err.what()<<std::endl;
           }
-          ++num_new_connections;
           
           // write socket is only connected to by the master middleman
           if(write_sock){
@@ -103,14 +99,15 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
             tmp=ip + ":" + store_port;
             tmp="tcp://"+ tmp;
             errno=0;
-            write_sock->connect(tmp.c_str());
-            if(errno!=0 && connect_errs.count(errno)){
-              std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to write socket "
-                       <<tmp<<": "<<zmq_strerror(errno)<<std::endl;
-            } else {
+            try {
+              write_mtx.lock();
+              write_sock->connect(tmp.c_str()); // no return value but will throw instead!
+              write_mtx.unlock();
               std::cout<<"MMUtilities::ConnectToEndpoints new connection to write socket "<<tmp<<std::endl;
+              ++num_new_connections;
+            } catch(zmq::error_t& err){
+              std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to write socket "<<tmp<<": "<<err.what()<<std::endl;
             }
-            ++num_new_connections;
           }
           
         } // else we're already connected to this service
@@ -127,20 +124,74 @@ int MMUtilities::ConnectToEndpoints(zmq::socket_t* readrep_sock, std::map<std::s
           mm_conns[ip]=service;
           tmp=ip + ":" + store_port;
           tmp="tcp://"+ tmp;
-          mm_sock->connect(tmp.c_str());
-          ++num_new_connections;
+          try {
+            mm_mtx.lock();
+            mm_sock->connect(tmp.c_str());
+            mm_mtx.unlock();
+            std::cout<<"MMUtilities::ConnectToEndpoints new connection to middleman "<<tmp<<std::endl;
+            ++num_new_connections;
+          } catch(zmq::error_t& err){
+            std::cerr<<"MMUtilities::ConnectToEndpoints error connecting to middleman "<<tmp<<": "<<err.what()<<std::endl;
+          }
         }
         
       }
       
+      // delete the Store if we're not keeping it
       if(!registered){
         delete service;
         service=0;
       }
       
+    } // end loop over services in broadcast
+    
+    // prune inactive endpoints
+    /*
+    std::vector<std::map<std::string,Store*>::iterator> to_erase;
+    for(std::map<std::string,Store*>::iterator it=readrep_conns.begin(); it!=readrep_conns.end(); ++it){
+      if(active_endpoints.count(it->first)==0){
+        std::cout<<"Booting inactive endpoint "<<it->first<<std::endl;
+        // explicitly disconnect too
+        std::string store_port="";
+        it->second->Get("remote_port",store_port);
+        std::string tmp="tcp://"+ it->first + ":" + store_port;
+        try {
+          readrep_sock->disconnect(tmp.c_str());
+          write_sock->disconnect(tmp.c_str());
+        } catch(zmq::error_t& err){
+          std::cerr<<"MMUtilities::ConnectToEndpoints error disconnecting from stale socket "<<tmp<<": "<<err.what()<<std::endl;
+          // this returns "no such file or directory"?? does it make sense to call disconnect on a sub socket?
+          // we should put the two into separate loops
+        }
+        delete it->second;
+        to_erase.push_back(it);
+      }
     }
+    for(std::map<std::string,Store*>::iterator it : to_erase){
+      readrep_conns.erase(it);
+    }
+    */
     
     return num_new_connections;
 }
 
-
+bool MMUtilities::ClearConnections(zmq::socket_t* sock, std::map<std::string,Store*> &conns, std::mutex& sock_mtx){
+    // prune and disconnect from all endpoints
+    bool ok=true;
+    for(std::map<std::string,Store*>::iterator it=conns.begin(); it!=conns.end(); ++it){
+      std::string store_port="";
+      it->second->Get("remote_port",store_port);
+      std::string tmp="tcp://"+ it->first + ":" + store_port;
+      try {
+        sock_mtx.lock();
+        sock->disconnect(tmp.c_str());
+        sock_mtx.unlock();
+      } catch(zmq::error_t& err){
+        std::cerr<<"MMUtilities::ClearConnections error disconnecting from client "<<tmp<<": "<<err.what()<<std::endl;
+        ok = false;
+      }
+      delete it->second;
+    }
+    conns.clear();
+    return ok;
+}

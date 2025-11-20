@@ -1,0 +1,23 @@
+[Unit]
+Description=middleman application that interfaces with the database via zmq
+After=postgresql.service
+Requires=postgresql.service
+OnFailure=notify-slack@%i.service
+
+[Service]
+Type=simple
+#Environment="PGHOST=/var/run/psql"  # some debian-based distros use this, though it can be configured in postgresql.conf
+Environment="PGHOST=/tmp"
+Environment="PGUSER=root"
+Environment="PGPORT=5432"
+Environment="PGDATABASE=daq"
+Environment="PGDATA=/var/lib/pgsql/data"
+Environment="LD_LIBRARY_PATH=/opt/zeromq-4.0.7/lib:/opt/boost_1_66_0/install/lib:/opt/libpqxx-6.4.5/install/lib:/opt/ToolFrameworkCore/lib:/opt/ToolDAQFramework/lib:$LD_LIBRARY_PATH"
+Environment="ASAN_OPTIONS=allocator_may_return_null=1"
+WorkingDirectory=/opt/middleman
+ExecStart=/opt/middleman/middleman /opt/middleman/ReceiveSQLConfig
+# if the middleman stops without the user doing so via systemctl, restart it automatically
+Restart=always
+
+[Install]
+WantedBy=default.target

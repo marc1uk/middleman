@@ -16,8 +16,8 @@ ToolFrameworkInclude= -I $(Dependencies)/ToolFrameworkCore/include
 ToolDAQFrameworkLib=  -L $(Dependencies)/ToolDAQFramework/lib -lDAQStore -lDAQDataModelBase -lServiceDiscovery
 ToolDAQFrameworkInclude= -I $(Dependencies)/ToolDAQFramework/include
 
-#CXXFLAGS= -g -O0 -fno-omit-frame-pointer -fdiagnostics-color=always -Wno-attributes
-CXXFLAGS= -fdiagnostics-color=always -Wno-attributes -O3
+#CXXFLAGS= -g -O0 -fno-omit-frame-pointer -fdiagnostics-color=always -Wno-attributes -fsanitize=address
+CXXFLAGS= -g -fdiagnostics-color=always -Wno-attributes -O3
 
 all: middleman
 

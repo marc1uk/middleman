@@ -22,23 +22,28 @@ class Postgres {
 	// open a connection to the database
 	pqxx::connection* OpenConnection(std::string* err=nullptr);
 	// close the connection to the database. returns success, for whatever failure implies.
-	bool CloseConnection(std::string* err=nullptr);
+	bool CloseConnection(pqxx::connection* conn, std::string* err=nullptr);
+	// check a connection to the database is open. if passed pointer is null,
+	// will try to fall back to internal connection m_conn
+	bool CheckConnection(pqxx::connection*& conn, std::string* err=nullptr);
+	// update internal connection
+	bool SetConnection(pqxx::connection* conn);
 	
 	// wrapper around exec since we handle the transaction and connection.
 	// nret specifies the expected number of returned rows from the query.
 	// res and row are outputs. return value is success.
-	bool Query(std::string query, int nret=0, pqxx::result* res=nullptr, pqxx::row* row=nullptr, std::string* err=nullptr);
+	bool Query(pqxx::connection* conn, std::string query, int nret=0, pqxx::result* res=nullptr, pqxx::row* row=nullptr, std::string* err=nullptr);
 	
 	// one that returns the value of many fields from one row as strings in a vector (row_or_col='r')
 	// or the value of one field from many rows (row_or_col='c')
-	bool QueryAsStrings(std::string query, std::vector<std::string> *results, char row_or_col, std::string* err=nullptr);
+	bool QueryAsStrings(pqxx::connection* conn, std::string query, std::vector<std::string> *results, char row_or_col, std::string* err=nullptr);
 	
 	// one that returns rows as json strings representing maps of fieldname:value
 	// we uhhhhh need to check this works ok with nested strings and stuff
-	bool QueryAsJsons(std::string query, std::vector<std::string> *results, std::string* err=nullptr);
+	bool QueryAsJsons(pqxx::connection* conn, std::string query, std::vector<std::string> *results, std::string* err=nullptr);
 	
-	bool Promote(int wait_seconds=60, std::string* err=nullptr);
-	bool Demote(int wait_seconds=60, std::string* err=nullptr);
+	bool Promote(pqxx::connection* conn, int wait_seconds=60, std::string* err=nullptr);
+	bool Demote(pqxx::connection* conn, int wait_seconds=60, std::string* err=nullptr);
 	
 	private:
 	int verbosity=1;
@@ -48,7 +53,7 @@ class Postgres {
 	int v_debug=3;
 	std::string logmessage;
 	int get_ok;
-	pqxx::connection* conn=nullptr;
+	pqxx::connection* m_conn=nullptr;
 	
 	// default connection details
 	std::string dbname="";
@@ -73,12 +78,12 @@ class Postgres {
 //	}
 	
 	template <typename... Ts>
-	bool ExecuteQuery(std::string query_string, Ts&&... rets){
+	bool ExecuteQuery(pqxx::connection* conn, std::string query_string, Ts&&... rets){
 		// run an SQL query and try to pass the results
 		// into a parameter pack. the passed arguments
 		// must be compatible with the returned columns
 		pqxx::row local_row;
-		bool success = Query(query_string, 1, nullptr, &local_row);
+		bool success = Query(conn, query_string, 1, nullptr, &local_row);
 		if(not success) return false; // query failed
 		
 		success = ExpandRow<sizeof...(Ts), Ts&&...>::expand(local_row, std::forward<Ts>(rets)...);
@@ -162,11 +167,11 @@ class Postgres {
 	////////
 	// helper function for insertions
 	template <typename... Rest>
-	bool Insert(std::string tablename, std::vector<std::string> &fields, std::string* err, Rest... args){
-		// maybe this is redundant since OpenConnection will check is_open (against recommendations)
+	bool Insert(pqxx::connection*& conn, std::string tablename, std::vector<std::string> &fields, std::string* err, Rest... args){
+		// maybe this is redundant since CheckConnection will check is_open (against recommendations)
 		for(int tries=0; tries<2; ++tries){
 			// ensure we have a connection to work with
-			if(OpenConnection(err)==nullptr){
+			if(CheckConnection(conn, err)){
 				// no connection to batabase -> abort
 				return false;
 			}
@@ -194,8 +199,10 @@ class Postgres {
 			catch (const pqxx::broken_connection &e){
 				// if our connection is broken after all, disconnect, reconnect and retry
 				if(tries==0){
-					CloseConnection();
-					delete conn; conn=nullptr;
+					CloseConnection(conn);
+					delete conn;
+					conn=nullptr;
+					conn=OpenConnection();
 					continue;
 				} else {
 					std::cerr<<"Postgres::Query error - broken connection, failed to re-establish it"<<std::endl;
@@ -232,10 +239,10 @@ class Postgres {
 	// https://libpqxx.readthedocs.io/en/6.3/a00255.html#ga81fe65fbb9561af7c5f0b33a9fe27e5a
 	// -------
 	// quote field or table names (nominally use double quotes)
-	bool pqxx_quote_name(const std::string& in, std::string& out, std::string* err=nullptr);
+	bool pqxx_quote_name(pqxx::connection* conn, const std::string& in, std::string& out, std::string* err=nullptr);
 	
 	// quote values (nominally, use single quotes)
-	bool pqxx_quote(const std::string& in, std::string& out, std::string* err=nullptr);
+	bool pqxx_quote(pqxx::connection* conn, const std::string& in, std::string& out, std::string* err=nullptr);
 	// ------------------ //
 	
 };
