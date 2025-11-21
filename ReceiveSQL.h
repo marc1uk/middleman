@@ -75,7 +75,8 @@ class ReceiveSQL{
 	std::vector<MulticastWorker_args*> multicast_worker_args;
 	MulticastReceive_args* multicast_listener_args=nullptr;
 	FindClients_args* findclients_args=nullptr;
-	size_t batch_size = 100; // minimum number of multicast messages to buffer before insert (or >30s)
+	size_t batch_size = 100;  // minimum number of multicast messages to buffer before insert
+	size_t max_hold_ms = 500; // or wait at most this long before inserting any new multicast messages
 	bool SendNextReply();
 	bool SendNextMulticast();
 	std::string escape_json(std::string s);
@@ -462,6 +463,7 @@ struct FindClients_args : public Thread_args {
 
 // POD class for things passed to multicast worker threads
 struct MulticastWorker_args : public Thread_args {
+	short id;
 	ReceiveSQL* parent;
 	bool running;
 	bool finished;
@@ -481,7 +483,8 @@ struct MulticastWorker_args : public Thread_args {
 	std::mutex* in_queue_mtx;
 	multicast_type type;
 	
-	MulticastWorker_args(ReceiveSQL* i_parent, pqxx::connection* i_conn, multicast_type worker_type, std::vector<std::string>* msg_queue, std::mutex* msg_queue_mtx){
+	MulticastWorker_args(ReceiveSQL* i_parent, pqxx::connection* i_conn, multicast_type worker_type, std::vector<std::string>* msg_queue, std::mutex* msg_queue_mtx, short iid){
+		id=iid;
 		parent = i_parent;
 		conn = i_conn;
 		type = worker_type;

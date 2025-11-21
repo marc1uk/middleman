@@ -290,8 +290,12 @@ bool ReceiveSQL::Finalise(){
 	Log("Waiting for multicast workers to finish...",3);
 	for(int i=0; i<secs_to_wait; ++i){
 		bool all_done=true;
-		for(MulticastWorker_args* thread_args : multicast_worker_args){
-			if(!thread_args->finished) all_done=false;
+		for(int j=0; j<multicast_worker_args.size(); ++j){
+			MulticastWorker_args* thread_args = multicast_worker_args.at(j);
+			if(!thread_args->finished){
+				all_done=false;
+				break;
+			}
 		}
 		if(all_done) break;
 		std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -407,6 +411,8 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	m_variables.Get("multicast_address",multicast_address);
 	int num_multicast_threads=10;
 	m_variables.Get("num_multicast_threads",num_multicast_threads);
+	m_variables.Get("batch_size",batch_size);
+	m_variables.Get("max_hold_ms",max_hold_ms);
 	
 	// set up multicast socket for sending logging & monitoring data
 	log_socket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -464,7 +470,7 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	
 	// used in send & receive; will be the same for both log & mon
 	multicast_addrlen = sizeof(log_addr);
-
+	
 	/*
 	// for two-way comms, we should bind to INADDR_ANY, not a specific multicast address.... maybe?
 	struct sockaddr_in multicast_addr2;
@@ -498,7 +504,9 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	}
 	
 	multicast_listener_args = new MulticastReceive_args;
+	multicast_listener_args->type=multicast_type::log;
 	multicast_listener_args->parent = this;
+	multicast_listener_args->running = true;
 	multicast_listener_args->finished = false;
 	multicast_listener_args->socket = log_socket;
 	multicast_listener_args->addr = &log_addr;
@@ -507,7 +515,9 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 	m_util.CreateThread("log_receiver", &GetMulticastMessages, multicast_listener_args);
 	
 	multicast_listener_args = new MulticastReceive_args;
+	multicast_listener_args->type=multicast_type::mon;
 	multicast_listener_args->parent = this;
+	multicast_listener_args->running = true;
 	multicast_listener_args->finished = false;
 	multicast_listener_args->socket = mon_socket;
 	multicast_listener_args->addr = &mon_addr;
@@ -526,8 +536,9 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 			Log("Failed to open connection to database for log worker thread!",v_error);
 			return false;
 		}
-		MulticastWorker_args* thread_args=new MulticastWorker_args(this, conn, multicast_type::log, &in_log_queue, &in_log_queue_mtx);
-		m_util.CreateThread("log_worker", &MulticastWorker, thread_args);
+		MulticastWorker_args* thread_args=new MulticastWorker_args(this, conn, multicast_type::log, &in_log_queue, &in_log_queue_mtx, i);
+		std::string name="log_worker_"+std::to_string(i); // like ROOT histograms, they do need a unique name
+		m_util.CreateThread(name, &MulticastWorker, thread_args);
 		multicast_worker_args.push_back(thread_args);
 	}
 	
@@ -537,8 +548,9 @@ bool ReceiveSQL::InitMulticast(Store& m_variables){
 			Log("Failed to open connection to database for multicast thread!",v_error);
 			return false;
 		}
-		MulticastWorker_args* thread_args=new MulticastWorker_args(this, conn, multicast_type::mon, &in_mon_queue, &in_mon_queue_mtx);
-		m_util.CreateThread("mon_worker", &MulticastWorker, thread_args);
+		MulticastWorker_args* thread_args=new MulticastWorker_args(this, conn, multicast_type::mon, &in_mon_queue, &in_mon_queue_mtx, i+(num_multicast_threads/2));
+		std::string name="mon_worker_"+std::to_string(i);
+		m_util.CreateThread(name, &MulticastWorker, thread_args);
 		multicast_worker_args.push_back(thread_args);
 	}
 	
@@ -1869,16 +1881,20 @@ void ReceiveSQL::GetMulticastMessages(Thread_args* arg){
 	MulticastReceive_args* m_args=reinterpret_cast<MulticastReceive_args*>(arg);
 	ReceiveSQL& p = *m_args->parent;
 	
-	if(m_args->finished) return;
+	if(m_args->finished){
+		std::this_thread::sleep_for(std::chrono::milliseconds(100)); // throttler.... probably unneeded
+		return;
+	}
 	
 	// check if parent has told us to finalise
 	if(!m_args->running){
 		// parent has told us to finalise
 		m_args->finished=true;
+		return;
 	}
 	
 	// poll multicast socket
-	zmq::poll(&m_args->poll, 1, 100);
+	zmq::poll(&m_args->poll, 1, 500);
 	
 	// see if we had any multicast messages
 	if(m_args->poll.revents & ZMQ_POLLIN){
@@ -1906,12 +1922,12 @@ void ReceiveSQL::GetMulticastMessages(Thread_args* arg){
 			p.Log("Put multicast msg in queue: '"+std::string(m_args->message)+"'",12);
 			
 		}
-	} /*else { std::cout<<"no multicast messages"<<std::endl; }*/
+	} /*else { std::cout<<"no multicast messages"<<std::endl; } */
 	
 	p.Log("Trimming In Multicast Deque",20);
 	// FIXME don't do this here? Or... is there a better place?
-	m_args->get_ok = p.TrimVector("in_log_queue");
-	m_args->get_ok = p.TrimVector("in_mon_queue");
+	if(m_args->type==multicast_type::log) m_args->get_ok = p.TrimVector("in_log_queue");
+	else m_args->get_ok = p.TrimVector("in_mon_queue");
 	
 	return;
 }
@@ -2332,7 +2348,10 @@ void ReceiveSQL::MulticastWorker(Thread_args* arg){
 	MulticastWorker_args* m_args=reinterpret_cast<MulticastWorker_args*>(arg);
 	ReceiveSQL& p = *m_args->parent;
 	
-	if(m_args->finished) return;
+	if(m_args->finished){
+		std::this_thread::sleep_for(std::chrono::milliseconds(100)); // throttler.... probably unneeded
+		return;
+	}
 	
 	// check if parent has new messages for us
 	m_args->in_queue_mtx->lock();
@@ -2344,7 +2363,8 @@ void ReceiveSQL::MulticastWorker(Thread_args* arg){
 			m_args->finished=true;
 		}
 		
-		usleep(100);  // don't keep locking it too often
+		// don't keep locking it too often
+		std::this_thread::sleep_for(std::chrono::microseconds(100));
 		return;
 	}
 	
@@ -2367,7 +2387,8 @@ void ReceiveSQL::MulticastWorker(Thread_args* arg){
 			m_args->query += m_args->vals_string;
 			m_args->first_vals = false;
 			++m_args->n_queries;
-		}
+			// FIXME errors should never silently disappear
+		} /*else { printf("MC parse error\n"); } */
 		
 	}
 	m_args->msg_queue.resize(0);
@@ -2375,7 +2396,7 @@ void ReceiveSQL::MulticastWorker(Thread_args* arg){
 	// see if we have enough messages for a transaction,
 	// or it's been long enough to force one to prevent messages sitting too long without insertion
 	boost::posix_time::time_duration lapse = m_args->last_insert - boost::posix_time::microsec_clock::universal_time();
-	if(m_args->n_queries < p.batch_size && lapse.total_seconds() < 30) return;
+	if(m_args->n_queries < p.batch_size && lapse.total_milliseconds() < p.max_hold_ms) return;
 	
 	// merge all messages and do batch insertion
 	m_args->query += ";";
@@ -2396,6 +2417,7 @@ void ReceiveSQL::MulticastWorker(Thread_args* arg){
 	if(not m_args->get_ok){
 		// something went wrong
 		// can't use Log or we end up in a circular loop since Log is a multicast query itself.
+		// FIXME printouts for error not great
 		std::cerr<<"Error inserting logmessage '"<<m_args->query<<"' into database"<<std::endl;
 		if(m_args->type==multicast_type::log) p.log_queries_failed+=m_args->n_queries;
 		else p.mon_queries_failed+=m_args->n_queries;
