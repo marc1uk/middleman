@@ -132,6 +132,12 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		return true;
 	}
 	
+	// empty array
+	if(thejson.find_first_not_of(" ,\n")==std::string::npos){
+		result.type=JsonParserResultType::empty;
+		return true;
+	}
+	
 	// json arrays are annoyingly flexible; they can be homogeneous,
 	// containing ints, floats, strings, bools, nulls or objects,
 	// but they can also be inhomogeneous combining elements of all these different types
@@ -183,22 +189,22 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		// could be floats or strings, or arrays or objects
 	}
 	// rule out integers by anything other than digits and signs
-	if(thejson.find_first_not_of("01234567890+-, ")!=std::string::npos){
+	if(thejson.find_first_not_of("01234567890+-, \n")!=std::string::npos){
 		if(verbose) std::cout<<"found something other than digits: can't be ints"<<std::endl;
 		all_sints=false;
 		all_uints=false;
 	}
 	// rule out doubles by anything other than numbers, signs and scientific notation characters
-	if(thejson.find_first_not_of("0123456789+-.Ee^*, ")!=std::string::npos){
+	if(thejson.find_first_not_of("0123456789+-.Ee^*, \n")!=std::string::npos){
 		if(verbose) std::cout<<"found something other than SI characters: can't be floats"<<std::endl;
 		all_floats=false;
 	}
 	// rule out bools and nulls by finding anything other than the corresponding characters
-	if(thejson.find_first_not_of("tTrRuUeEfFaAlLsSeE, ")!=std::string::npos){
+	if(thejson.find_first_not_of("tTrRuUeEfFaAlLsSeE, \n")!=std::string::npos){
 		if(verbose) std::cout<<"found characters not in true or false; can't be bools"<<std::endl;
 		all_bools=false;
 	}
-	if(thejson.find_first_not_of("nNuUlL, ")!=std::string::npos){
+	if(thejson.find_first_not_of("nNuUlL, \n")!=std::string::npos){
 		if(verbose) std::cout<<"found characters not in null; can't be nulls"<<std::endl;
 		all_nulls=false;
 	}
@@ -233,8 +239,9 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		// note that as entry elements may be objects, nested arrays, or strings that contain commas,
 		// we can't just treat it as a comma-delimited list
 		bool in_string=false;
+		bool escaped=false;
 		std::vector<char> delimiters;
-		if(verbose)	std::cout<<"scanning remaining string: "
+		if(verbose) std::cout<<"scanning remaining string: "
 		                     <<thejson.substr(next_start,std::string::npos)<<std::endl;
 		for(next_end=next_start; next_end<thejson.length(); ++next_end){
 			if(verbose){
@@ -244,9 +251,17 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 					if(k>0) std::cout<<", ";
 					std::cout<<delimiters.at(k);
 				}
-				std::cout<<std::endl;
+				std::cout<<", escaped: "<<escaped<<std::endl;
 			}
 			char nextchar = thejson.at(next_end);
+			if(escaped){
+				escaped=false;
+				continue;
+			}
+			if(in_string && nextchar=='\\'){
+				escaped=true;
+				continue;
+			}
 			if(in_string && nextchar=='"'){
 				in_string=false;
 				continue;
@@ -273,7 +288,8 @@ bool JSONP::ScanJsonArray(const std::string& thejson, JsonParserResult& result){
 		if(verbose) std::cout<<"next array element is "<<tmp<<std::endl;
 		tmp=Trim(tmp);
 		if(verbose) std::cout<<"trimmed is '"<<tmp<<"'"<<std::endl;
-		
+		// ignore empty elements?
+		if(tmp.empty()) continue;
 		if(tmp.front()=='{' || tmp.front()=='['){
 			// found an object or array
 			// since inhomogeneous element types are valid, we could have already parsed
@@ -606,7 +622,7 @@ bool JSONP::ScanJsonPrimitive(std::string thejson, std::string thekey, BStore& o
 	
 	try {
 		if(verbose) std::cout<<"try int"<<std::endl;
-
+		
 		// discard leading whitespace
 		size_t startpos=0;
 		size_t endpos=0;
@@ -683,6 +699,11 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 	// should be sequence of comma delimited key-value pairs,
 	// with string keys separated from values by colons
 	
+	// technically JSON objects and arrays may have a trailing comma
+	thejson=Trim(thejson);
+	if(thejson.back()==',') thejson.pop_back();
+	thejson=Trim(thejson);
+	
 	// trivial case
 	if(thejson=="") return true;
 	
@@ -691,6 +712,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 	size_t next_end=std::string::npos;
 	bool key=true; // alternate key and value
 	std::string next_key;
+	bool escaped=false;
 	while(true){
 		// find the end of the next array entry
 		// note that as entry elements may be objects, nested arrays, or strings that contain commas,
@@ -707,9 +729,17 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 					if(k>0) std::cout<<", ";
 					std::cout<<delimiters.at(k);
 				}
-				std::cout<<std::endl;
+				std::cout<<", escaped: "<<escaped<<std::endl;
 			}
 			char& nextchar = thejson.at(next_end);
+			if(escaped){
+				escaped=false;
+				continue;
+			}
+			if(in_string && nextchar=='\\'){
+				escaped=true;
+				continue;
+			}
 			if(in_string && nextchar=='"'){
 				in_string=false;
 				if(key && delimiters.empty()){
@@ -753,6 +783,8 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 		
 		// if processing a key record it and continue to next loop
 		if(key){
+			// ignore duplicated delimiters
+			if(tmp.empty()) continue;
 			next_key=tmp;
 			if(verbose) std::cout<<"it key"<<std::endl;
 			// sanity checks, key should be a string
