@@ -975,6 +975,7 @@ bool JSONP::ScanJsonObject(std::string thejson, BStore& outstore){
 		if(verbose) std::cout<<"updating iterators"<<std::endl;
 		if(next_end==thejson.length()) break;
 		next_start=next_end+1;
+		while(next_start<thejson.length() && std::isspace(thejson[next_start])) ++next_start;
 	}
 	if(verbose) std::cout<<"parsing object done"<<std::endl;
 	
