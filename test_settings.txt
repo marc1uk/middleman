@@ -1,0 +1,30 @@
+## REMEMBER TO DISABLE DEBUGGING, ENABLE OPTIMISATIONS ON MIDDLEMAN AND THIS
+## REMEMBER TO SET MIDDLEMAN VERBOSITIES TO 0
+n_threads 50
+n_msgs 1000     # this is per thread
+duration_ms 0
+start_signal 0
+stop_signal 0
+period_ms 1    # -1 is as no wait
+randomize_period 0
+period_ms_min -1
+period_ms_max -1
+#msg test_message
+msg_length 100
+randomize_msg 1
+msg_length_min -1
+msg_length_max -1
+as_query 0
+bypass_middleman 0
+# following only relevant if bypass_middleman=1
+# or as_query=1
+batch_size 1
+randomize_batchsize 0
+batch_size_min -1
+batch_size_max -1
+dbname daq
+dbhost 192.168.2.121
+dbport 5432
+dbuser root
+# end only for bypass_middleman=1
+#print_results 1  # whether each thread should print its own results on completion. bad as not synced, debug only
